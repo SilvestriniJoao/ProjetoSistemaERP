@@ -543,6 +543,34 @@ local function activateMostExpensiveEvent()
     return confirmed
 end
 
+-- Só CONSULTA o estado atual (RequestState, sem Activate) e devolve quantos
+-- segundos ainda restam do evento já ativo, sem mexer em nada. Usado ao
+-- retomar o ciclo (ex: depois de pausar por causa de outro jogador) pra não
+-- resetar o timer pra 610s de novo quando o evento real já tá, por
+-- exemplo, com só 6 minutos restantes.
+local function getActiveEventRemainingSeconds()
+    if not eventShopActionRemote then return nil end
+
+    latestEventShopPayload = nil
+    pcall(function() eventShopActionRemote:FireServer("RequestState") end)
+
+    local start = tick()
+    while not latestEventShopPayload and (tick() - start) < 3 do
+        task.wait(0.1)
+    end
+
+    if not latestEventShopPayload then return nil end
+    if tostring(latestEventShopPayload.ActiveEventId or "") == "" then return nil end
+
+    local endsAt = tonumber(latestEventShopPayload.ActiveEventEndsAt) or 0
+    if endsAt <= 0 then return nil end
+
+    local remaining = math.floor(endsAt - os.time())
+    if remaining <= 0 then return nil end
+
+    return remaining, latestEventShopPayload.ActiveEventId
+end
+
 local checkpointSlots = {
     { x = 41.4, y = 11.0, z = 3267.2, enabled = true }
 }
@@ -972,12 +1000,20 @@ local function startMasterCycle()
 
     task.spawn(function()
         while config.running do
-            statusLabel.Text = "Status: ATIVANDO EVENTO..."
-            activateMostExpensiveEvent()
-            if not config.running then break end
+            local remaining, activeEventId = getActiveEventRemainingSeconds()
 
-            statusLabel.Text = "Status: TELEPORTANDO (evento ativo)"
-            runTeleportLoopForDuration(EVENT_DURATION_SECONDS + EVENT_DURATION_BUFFER_SECONDS)
+            if remaining then
+                addLog("[*] Evento já ativo (" .. tostring(activeEventId) .. "), restam ~" .. remaining .. "s. Retomando sem reativar.")
+                statusLabel.Text = "Status: TELEPORTANDO (evento ativo)"
+                runTeleportLoopForDuration(remaining + EVENT_DURATION_BUFFER_SECONDS)
+            else
+                statusLabel.Text = "Status: ATIVANDO EVENTO..."
+                activateMostExpensiveEvent()
+                if not config.running then break end
+
+                statusLabel.Text = "Status: TELEPORTANDO (evento ativo)"
+                runTeleportLoopForDuration(EVENT_DURATION_SECONDS + EVENT_DURATION_BUFFER_SECONDS)
+            end
             if not config.running then break end
 
             statusLabel.Text = "Status: VENDENDO SLIMES..."
