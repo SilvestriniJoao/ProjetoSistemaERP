@@ -647,15 +647,15 @@ stopBtn.Font = Enum.Font.GothamBold
 stopBtn.Text = "■ PARAR"
 stopBtn.Parent = frame
 
-local equipBestBtn = Instance.new("TextButton")
-equipBestBtn.Size = UDim2.new(1, -20, 0, 30)
-equipBestBtn.Position = UDim2.new(0, 10, 0, 90)
-equipBestBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 0)
-equipBestBtn.TextColor3 = Color3.new(1, 1, 1)
-equipBestBtn.TextSize = 12
-equipBestBtn.Font = Enum.Font.GothamBold
-equipBestBtn.Text = "⭐ EQUIP BEST (manual)"
-equipBestBtn.Parent = frame
+local toggleAlertBtn = Instance.new("TextButton")
+toggleAlertBtn.Size = UDim2.new(1, -20, 0, 30)
+toggleAlertBtn.Position = UDim2.new(0, 10, 0, 90)
+toggleAlertBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 0)
+toggleAlertBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleAlertBtn.TextSize = 12
+toggleAlertBtn.Font = Enum.Font.GothamBold
+toggleAlertBtn.Text = "🔔 ALERTA: LIMITED RAINBOW"
+toggleAlertBtn.Parent = frame
 
 local sellAllBtn = Instance.new("TextButton")
 sellAllBtn.Size = UDim2.new(1, -20, 0, 35)
@@ -1003,10 +1003,75 @@ local function stopMasterCycle()
     addLog("[!] Parando ciclo automático...")
 end
 
-startBtn.MouseButton1Click:Connect(startMasterCycle)
-stopBtn.MouseButton1Click:Connect(stopMasterCycle)
-equipBestBtn.MouseButton1Click:Connect(function()
-    equipBestSlimes()
+-- ========================================
+-- DETECTOR DE OUTRO JOGADOR: pausa o ciclo automático sozinho se alguém
+-- mais entrar na partida, e retoma sozinho quando ficar sozinho de novo.
+-- Não mexe no anti-afk (não é visível/suspeito), só no ciclo master, que É
+-- a parte visível (teleporte, ativação de evento, venda).
+-- ========================================
+
+local autoResumeWhenAlone = false
+
+local function otherPlayersCount()
+    return #Players:GetPlayers() - 1
+end
+
+local function handlePlayerPresenceChange()
+    local others = otherPlayersCount()
+
+    if others > 0 then
+        if config.running then
+            addLog("[!] Outro jogador entrou na partida (" .. others .. "), pausando o ciclo automático...")
+            autoResumeWhenAlone = true
+            stopMasterCycle()
+            statusLabel.Text = "Status: PAUSADO (outro jogador na partida)"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
+        end
+    else
+        if autoResumeWhenAlone then
+            addLog("[*] Sozinho na partida de novo, retomando o ciclo automático...")
+            autoResumeWhenAlone = false
+            startMasterCycle()
+        end
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    if player == Players.LocalPlayer then return end
+    handlePlayerPresenceChange()
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if player == Players.LocalPlayer then return end
+    -- Espera o Players:GetPlayers() atualizar de verdade antes de contar
+    task.wait(0.2)
+    handlePlayerPresenceChange()
+end)
+
+startBtn.MouseButton1Click:Connect(function()
+    if otherPlayersCount() > 0 then
+        addLog("[!] Tem outro jogador na partida, ciclo vai iniciar sozinho assim que ficar só.")
+        autoResumeWhenAlone = true
+        statusLabel.Text = "Status: PAUSADO (outro jogador na partida)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
+        return
+    end
+    startMasterCycle()
+end)
+stopBtn.MouseButton1Click:Connect(function()
+    autoResumeWhenAlone = false
+    stopMasterCycle()
+end)
+toggleAlertBtn.MouseButton1Click:Connect(function()
+    if alertKeywords[1] == "limitedrainbow" then
+        alertKeywords = { "limited" }
+        toggleAlertBtn.Text = "🔔 ALERTA: TODOS OS LIMITED"
+        addLog("[*] Alerta/Equip Best automático agora dispara pra QUALQUER limited")
+    else
+        alertKeywords = { "limitedrainbow" }
+        toggleAlertBtn.Text = "🔔 ALERTA: LIMITED RAINBOW"
+        addLog("[*] Alerta/Equip Best automático agora dispara só pro limited rainbow")
+    end
 end)
 sellAllBtn.MouseButton1Click:Connect(function()
     autoSellAllSlimes()
