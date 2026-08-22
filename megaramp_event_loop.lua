@@ -357,13 +357,19 @@ local function autoSellAllSlimesBlocking()
     if promptPos then
         originalCFrame = teleportPlayerTo(promptPos)
         addLog("[*] Teleportado até a área de venda")
-        task.wait(0.2)
+        -- Folga maior que o Event Shop de propósito: aqui a gente PRECISA
+        -- disparar o ProximityPrompt de verdade (fireproximityprompt), não
+        -- tem remote direto equivalente ao "RequestState" do Event Shop pra
+        -- abrir a lista de venda. Dar mais tempo pra física/replicação
+        -- assentar após o teleporte antes de tocar o prompt.
+        task.wait(0.5)
     end
 
     latestSellList = nil
 
     local fired = false
     if typeof(fireproximityprompt) == "function" then
+        task.wait()
         fired = pcall(fireproximityprompt, prompt)
     end
 
@@ -966,4 +972,4 @@ sellAllBtn.MouseButton1Click:Connect(function()
 end)
 
 addLog("Menu carregado. Clique em INICIAR pra rodar o ciclo automático.")
-print("[+] MEGA RAMP EVENT LOOP carregadoS!")
+print("[+] MEGA RAMP EVENT LOOP carregado!")
