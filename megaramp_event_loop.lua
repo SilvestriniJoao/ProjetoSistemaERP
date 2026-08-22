@@ -35,7 +35,6 @@ local jumpLuckStartRemote = findRemote("JumpLuckStart")
 local checkpointLuckUpdateRemote = findRemote("CheckpointLuckUpdate")
 local openBoxClickRemote = findRemote("OpenBoxClick")
 local boxStarsRevealRemote = findRemote("BoxStarsReveal")
-local slimeRevealRemote = findRemote("SlimeReveal")
 local sellSlimeOpenRemote = findRemote("SellSlimeOpen")
 local sellSlimeActionRemote = findRemote("SellSlimeAction")
 local equipBestInventoryRemote = findRemote("EquipBestInventory")
@@ -52,11 +51,46 @@ print(retryRunRemote and "[+] RetryRun encontrado" or "[-] RetryRun NÃO encontr
 print(startBoxRevealRemote and "[+] StartBoxReveal encontrado" or "[-] StartBoxReveal NÃO encontrado")
 print(endBoxRevealRemote and "[+] EndBoxReveal encontrado" or "[-] EndBoxReveal NÃO encontrado")
 print(boxStarsRevealRemote and "[+] BoxStarsReveal encontrado" or "[-] BoxStarsReveal NÃO encontrado")
-print(slimeRevealRemote and "[+] SlimeReveal encontrado" or "[-] SlimeReveal NÃO encontrado")
 
 local function addLog(msg)
     print("[TRIGGER] " .. msg)
 end
+
+-- ========================================
+-- ANTI-AFK: pula sozinho a cada 10 minutos, rodando em segundo plano desde
+-- que o script carrega -- independente do ciclo master estar RODANDO ou
+-- PARADO, pra nunca cair por inatividade enquanto o script tá aberto.
+-- ========================================
+
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local antiAfkIntervalMinutes = 10
+local antiAfkJumpCount = 0
+
+local function antiAfkDoJump()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    end)
+
+    local character = Players.LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            pcall(function() humanoid.Jump = true end)
+        end
+    end
+
+    antiAfkJumpCount = antiAfkJumpCount + 1
+    addLog("[ANTI-AFK] Pulo #" .. antiAfkJumpCount)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(antiAfkIntervalMinutes * 60)
+        antiAfkDoJump()
+    end
+end)
 
 -- Pré-declarado bem cedo aqui pois várias funções abaixo (inclusive as de
 -- venda) checam config.running pra saber se devem parar. Definido antes de
@@ -152,21 +186,16 @@ end
 
 local alertKeywords = { "limitedrainbow" }
 
--- IMPORTANTE: o alerta escuta SlimeReveal (nome do slime + raridade + renda),
--- não BoxStarsReveal (que é só o mini-jogo do clover/estrelas de sorte,
--- não carrega nome nenhum -- por isso o alerta nunca disparava antes).
--- SlimeReveal.OnClientEvent(p1, p2, p3): p1 = nome interno do slime
--- (ex: "LimitedRainbow"), p2 = raridade/tier (ex: "LIMITED", "DIVINE"),
--- p3 = renda/segundo. p2 sozinho não distingue a cor, só o tier.
-if slimeRevealRemote then
-    slimeRevealRemote.OnClientEvent:Connect(function(name, rarity, income)
-        if not name then return end
-        local lowerName = tostring(name):lower()
-        for _, keyword in ipairs(alertKeywords) do
-            if lowerName:find(keyword) then
-                print("[ALERTA] Slime revelado: " .. tostring(name) .. " [" .. tostring(rarity) .. "] (+$" .. tostring(income) .. "/sec)")
-                playDivineAlertSequence()
-                break
+if boxStarsRevealRemote then
+    boxStarsRevealRemote.OnClientEvent:Connect(function(index, revealed, rarity, name, value)
+        if revealed and name then
+            local lowerName = name:lower()
+            for _, keyword in ipairs(alertKeywords) do
+                if lowerName:find(keyword) then
+                    print("[ALERTA] Item revelado: " .. name .. " (valor: " .. tostring(value) .. ")")
+                    playDivineAlertSequence()
+                    break
+                end
             end
         end
     end)
@@ -230,7 +259,10 @@ end
 
 local sellingAll = false
 
-local function sellAllSlimes()
+-- Bloqueante: vende tudo, fecha o painel e só então devolve o controle.
+-- Sem task.spawn interno aqui de propósito -- o ciclo master precisa saber
+-- com certeza que a janela de venda já fechou antes de ir pro próximo evento.
+local function sellAllSlimesBlocking()
     if not sellSlimeActionRemote then
         addLog("[!] SellSlimeAction não encontrado")
         return
@@ -247,53 +279,68 @@ local function sellAllSlimes()
     sellingAll = true
     addLog("[*] Vendendo todos os slimes...")
 
-    task.spawn(function()
-        local sold = 0
-        local stuckCount = 0
+    local sold = 0
+    local stuckCount = 0
 
-        while latestSellList and #latestSellList > 0 and stuckCount < 20 do
-            local sizeBefore = #latestSellList
-            local item = latestSellList[1]
-            local index = item and item.Index
+    while latestSellList and #latestSellList > 0 and stuckCount < 20 do
+        local sizeBefore = #latestSellList
+        local item = latestSellList[1]
+        local index = item and item.Index
 
-            if index then
-                pcall(function() sellSlimeActionRemote:FireServer("Sell", index) end)
-                sold = sold + 1
-                addLog("[✓] Vendido slime #" .. sold .. " (Index=" .. tostring(index) .. ", restam ~" .. (sizeBefore - 1) .. ")")
-            end
-
-            local start = tick()
-            while latestSellList and #latestSellList >= sizeBefore and (tick() - start) < 1.5 do
-                task.wait(0.05)
-            end
-
-            if latestSellList and #latestSellList >= sizeBefore then
-                stuckCount = stuckCount + 1
-            else
-                stuckCount = 0
-            end
+        if index then
+            pcall(function() sellSlimeActionRemote:FireServer("Sell", index) end)
+            sold = sold + 1
+            addLog("[✓] Vendido slime #" .. sold .. " (Index=" .. tostring(index) .. ", restam ~" .. (sizeBefore - 1) .. ")")
         end
 
-        addLog("[+] Venda finalizada! Total vendido: " .. sold)
-        sellingAll = false
+        local start = tick()
+        while latestSellList and #latestSellList >= sizeBefore and (tick() - start) < 1.5 do
+            task.wait(0.05)
+        end
 
-        task.wait(0.2)
-        local sellFrame = findSellSlimeFrame()
-        if sellFrame then
-            local closeBtn = sellFrame:FindFirstChild("Close", true)
-            if closeBtn and closeBtn:IsA("GuiButton") then
-                local ok = pcall(function() firesignal(closeBtn.MouseButton1Click) end)
-                if not ok then
-                    sellFrame.Visible = false
-                end
-            else
+        if latestSellList and #latestSellList >= sizeBefore then
+            stuckCount = stuckCount + 1
+        else
+            stuckCount = 0
+        end
+    end
+
+    addLog("[+] Venda finalizada! Total vendido: " .. sold)
+    sellingAll = false
+
+    task.wait(0.2)
+    local sellFrame = findSellSlimeFrame()
+    if sellFrame then
+        local closeBtn = sellFrame:FindFirstChild("Close", true)
+        if closeBtn and closeBtn:IsA("GuiButton") then
+            local ok = pcall(function() firesignal(closeBtn.MouseButton1Click) end)
+            if not ok then
                 sellFrame.Visible = false
             end
+        else
+            sellFrame.Visible = false
         end
-    end)
+    end
+
+    -- Confirma de verdade que o painel fechou (até 3s) antes de seguir,
+    -- em vez de só assumir que o clique/Visible=false funcionou na hora
+    local closeStart = tick()
+    while true do
+        local frame = findSellSlimeFrame()
+        if not frame or not frame.Visible then break end
+        if (tick() - closeStart) > 3 then
+            addLog("[!] Painel de venda não confirmou fechamento, seguindo mesmo assim")
+            break
+        end
+        task.wait(0.1)
+    end
 end
 
-local function autoSellAllSlimes()
+-- Teleporta até a área de venda, dispara o prompt, espera a lista, vende
+-- tudo (bloqueante) e só DEPOIS volta pra posição original. Também
+-- bloqueante -- quem chamar só recebe o controle de volta quando a venda +
+-- fechamento do painel + volta já terminaram tudo de verdade.
+local function autoSellAllSlimesBlocking()
     if sellingAll then
         addLog("[!] Já está vendendo, aguarde terminar")
         return
@@ -328,49 +375,27 @@ local function autoSellAllSlimes()
 
     addLog("[*] Prompt disparado, aguardando lista de slimes...")
 
-    task.spawn(function()
-        local start = tick()
-        while not latestSellList and (tick() - start) < 5 do
-            task.wait(0.05)
-        end
+    local start = tick()
+    while not latestSellList and (tick() - start) < 5 do
+        task.wait(0.05)
+    end
 
-        if not latestSellList then
-            addLog("[!] Timeout esperando SellSlimeOpen")
-            teleportPlayerBack(originalCFrame)
-            return
-        end
-
-        sellAllSlimes()
-
-        local waitStart = tick()
-        while sellingAll and (tick() - waitStart) < 60 do
-            task.wait(0.2)
-        end
-
-        task.wait(0.3)
+    if not latestSellList then
+        addLog("[!] Timeout esperando SellSlimeOpen")
         teleportPlayerBack(originalCFrame)
-        addLog("[*] Voltou pra posição original (venda)")
-    end)
+        return
+    end
+
+    sellAllSlimesBlocking()
+
+    task.wait(0.3)
+    teleportPlayerBack(originalCFrame)
+    addLog("[*] Voltou pra posição original (venda)")
 end
 
--- Espera a venda começar de verdade (até 8s) e só então espera ela
--- terminar (até 90s). Sem isso, se checarmos "sellingAll" cedo demais
--- (antes do prompt/lista chegarem) a gente acha que já terminou sem nem
--- ter começado.
-local function waitForSellCompletion()
-    local start = tick()
-    while not sellingAll and (tick() - start) < 8 do
-        if not config.running then return end
-        task.wait(0.2)
-    end
-
-    if sellingAll then
-        local waitStart = tick()
-        while sellingAll and (tick() - waitStart) < 90 do
-            if not config.running then return end
-            task.wait(0.3)
-        end
-    end
+-- Wrapper não-bloqueante pro botão manual (não trava a thread do clique)
+local function autoSellAllSlimes()
+    task.spawn(autoSellAllSlimesBlocking)
 end
 
 -- ========================================
@@ -910,9 +935,8 @@ local function startMasterCycle()
 
             statusLabel.Text = "Status: VENDENDO SLIMES..."
             addLog("[*] Tempo do evento acabou, vendendo todos os slimes...")
-            autoSellAllSlimes()
-            waitForSellCompletion()
-            addLog("[✓] Venda do ciclo concluída, reiniciando...")
+            autoSellAllSlimesBlocking()
+            addLog("[✓] Venda do ciclo concluída (painel fechado), reiniciando...")
 
             cycleCount = cycleCount + 1
             cycleLabel.Text = "Ciclos completos: " .. cycleCount
@@ -942,4 +966,4 @@ sellAllBtn.MouseButton1Click:Connect(function()
 end)
 
 addLog("Menu carregado. Clique em INICIAR pra rodar o ciclo automático.")
-print("[+] MEGA RAMP EVENT LOOP carregado!")
+print("[+] MEGA RAMP EVENT LOOP carregadoS!")
