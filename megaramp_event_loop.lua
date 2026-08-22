@@ -35,6 +35,7 @@ local jumpLuckStartRemote = findRemote("JumpLuckStart")
 local checkpointLuckUpdateRemote = findRemote("CheckpointLuckUpdate")
 local openBoxClickRemote = findRemote("OpenBoxClick")
 local boxStarsRevealRemote = findRemote("BoxStarsReveal")
+local slimeRevealRemote = findRemote("SlimeReveal")
 local sellSlimeOpenRemote = findRemote("SellSlimeOpen")
 local sellSlimeActionRemote = findRemote("SellSlimeAction")
 local equipBestInventoryRemote = findRemote("EquipBestInventory")
@@ -51,6 +52,7 @@ print(retryRunRemote and "[+] RetryRun encontrado" or "[-] RetryRun NÃO encontr
 print(startBoxRevealRemote and "[+] StartBoxReveal encontrado" or "[-] StartBoxReveal NÃO encontrado")
 print(endBoxRevealRemote and "[+] EndBoxReveal encontrado" or "[-] EndBoxReveal NÃO encontrado")
 print(boxStarsRevealRemote and "[+] BoxStarsReveal encontrado" or "[-] BoxStarsReveal NÃO encontrado")
+print(slimeRevealRemote and "[+] SlimeReveal encontrado" or "[-] SlimeReveal NÃO encontrado")
 
 local function addLog(msg)
     print("[TRIGGER] " .. msg)
@@ -150,16 +152,21 @@ end
 
 local alertKeywords = { "limitedrainbow" }
 
-if boxStarsRevealRemote then
-    boxStarsRevealRemote.OnClientEvent:Connect(function(index, revealed, rarity, name, value)
-        if revealed and name then
-            local lowerName = name:lower()
-            for _, keyword in ipairs(alertKeywords) do
-                if lowerName:find(keyword) then
-                    print("[ALERTA] Item revelado: " .. name .. " (valor: " .. tostring(value) .. ")")
-                    playDivineAlertSequence()
-                    break
-                end
+-- IMPORTANTE: o alerta escuta SlimeReveal (nome do slime + raridade + renda),
+-- não BoxStarsReveal (que é só o mini-jogo do clover/estrelas de sorte,
+-- não carrega nome nenhum -- por isso o alerta nunca disparava antes).
+-- SlimeReveal.OnClientEvent(p1, p2, p3): p1 = nome interno do slime
+-- (ex: "LimitedRainbow"), p2 = raridade/tier (ex: "LIMITED", "DIVINE"),
+-- p3 = renda/segundo. p2 sozinho não distingue a cor, só o tier.
+if slimeRevealRemote then
+    slimeRevealRemote.OnClientEvent:Connect(function(name, rarity, income)
+        if not name then return end
+        local lowerName = tostring(name):lower()
+        for _, keyword in ipairs(alertKeywords) do
+            if lowerName:find(keyword) then
+                print("[ALERTA] Slime revelado: " .. tostring(name) .. " [" .. tostring(rarity) .. "] (+$" .. tostring(income) .. "/sec)")
+                playDivineAlertSequence()
+                break
             end
         end
     end)
