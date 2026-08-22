@@ -14,6 +14,7 @@
 local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 print("=== MEGA RAMP EVENT LOOP ===")
@@ -257,6 +258,50 @@ local function teleportPlayerBack(originalCFrame)
     if hrp then hrp.CFrame = originalCFrame end
 end
 
+-- Confirmado via log de crash real do Roblox (crashes/attachments + .dmp):
+-- no PC, o fireproximityprompt trava/crasha ~0.5s depois de disparado
+-- (crash nativo de GPU, driver NVIDIA nvldumdx.dll -- não é erro de Lua).
+-- No celular esse pipeline D3D nem existe, por isso lá funciona liso. Por
+-- isso: no PC (tem teclado) simula o aperto de tecla de verdade via
+-- VirtualInputManager em vez do fireproximityprompt nativo; no celular
+-- (sem teclado) mantém o fireproximityprompt, que já é confirmado estável lá.
+local isPcPlatform = UserInputService.KeyboardEnabled
+
+local function triggerSellPromptOnPc(prompt)
+    local keyCode = prompt.KeyboardKeyCode
+    if not keyCode or keyCode == Enum.KeyCode.Unknown then
+        keyCode = Enum.KeyCode.E
+    end
+
+    local holdDuration = math.max(tonumber(prompt.HoldDuration) or 0, 0)
+
+    local pressed = pcall(function()
+        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+    end)
+
+    if not pressed then return false end
+
+    task.wait(holdDuration + 0.15)
+
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
+
+    return true
+end
+
+local function triggerSellPrompt(prompt)
+    if isPcPlatform then
+        return triggerSellPromptOnPc(prompt)
+    end
+
+    if typeof(fireproximityprompt) == "function" then
+        return pcall(fireproximityprompt, prompt)
+    end
+
+    return false
+end
+
 local sellingAll = false
 
 -- Bloqueante: vende tudo, fecha o painel e só então devolve o controle.
@@ -358,23 +403,19 @@ local function autoSellAllSlimesBlocking()
         originalCFrame = teleportPlayerTo(promptPos)
         addLog("[*] Teleportado até a área de venda")
         -- Folga maior que o Event Shop de propósito: aqui a gente PRECISA
-        -- disparar o ProximityPrompt de verdade (fireproximityprompt), não
-        -- tem remote direto equivalente ao "RequestState" do Event Shop pra
-        -- abrir a lista de venda. Dar mais tempo pra física/replicação
-        -- assentar após o teleporte antes de tocar o prompt.
+        -- disparar o ProximityPrompt de verdade, não tem remote direto
+        -- equivalente ao "RequestState" do Event Shop pra abrir a lista de
+        -- venda. Dar mais tempo pra física/replicação assentar após o
+        -- teleporte antes de tocar o prompt.
         task.wait(0.5)
     end
 
     latestSellList = nil
 
-    local fired = false
-    if typeof(fireproximityprompt) == "function" then
-        task.wait()
-        fired = pcall(fireproximityprompt, prompt)
-    end
+    local fired = triggerSellPrompt(prompt)
 
     if not fired then
-        addLog("[!] fireproximityprompt não disponível nesse executor, use o E manualmente perto da área")
+        addLog("[!] Não consegui disparar o prompt de venda, use o E/toque manualmente perto da área")
         teleportPlayerBack(originalCFrame)
         return
     end
