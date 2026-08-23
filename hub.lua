@@ -1651,6 +1651,76 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- ========================================
+-- ANIMAÇÕES CUSTOM: edita os IDs de idle/andar/correr DENTRO do script
+-- "Animate" do personagem (ele tem um slot separado pra cada estado), em
+-- vez de forçar uma animação por cima de tudo -- assim pular/etc continua
+-- normal, só idle/andar/correr trocam.
+-- ========================================
+
+local animConfig = {
+    enabled = false,
+    idleId = "",
+    walkId = "",
+    runId = "",
+}
+
+local function normalizeAnimId(id)
+    if not id or id == "" then return nil end
+    id = tostring(id)
+    if not id:match("^rbxassetid://") then
+        id = "rbxassetid://" .. id
+    end
+    return id
+end
+
+local function applyCustomAnimations()
+    if not animConfig.enabled then return end
+
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    local animateScript = character:FindFirstChild("Animate")
+    if not animateScript then
+        addLog("[ANIM] [!] Script 'Animate' não encontrado no personagem")
+        return
+    end
+
+    local function setId(pathNames, id)
+        local normalized = normalizeAnimId(id)
+        if not normalized then return end
+        local obj = animateScript
+        for _, name in ipairs(pathNames) do
+            obj = obj and obj:FindFirstChild(name)
+        end
+        if obj and obj:IsA("StringValue") then
+            obj.Value = normalized
+        end
+    end
+
+    setId({ "idle", "Animation1" }, animConfig.idleId)
+    setId({ "idle", "Animation2" }, animConfig.idleId)
+    setId({ "walk", "WalkAnim" }, animConfig.walkId)
+    setId({ "run", "RunAnim" }, animConfig.runId)
+
+    -- Muitas versões do Animate só leem os IDs uma vez, quando carregam --
+    -- desliga e liga de novo força ele reler os valores novos.
+    pcall(function()
+        animateScript.Disabled = true
+        task.wait()
+        animateScript.Disabled = false
+    end)
+
+    addLog("[ANIM] Animações customizadas aplicadas")
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if animConfig.enabled then
+        task.wait(1)
+        applyCustomAnimations()
+    end
+end)
+
+-- ========================================
 -- MENU: painel único responsivo com abas
 --
 -- Tudo isso vai dentro de uma função própria (chamada logo em seguida) só
@@ -1735,6 +1805,7 @@ local TAB_DEFS = {
     { key = "games", icon = "🎮" },
     { key = "cam", icon = "📷" },
     { key = "esp", icon = "🎯" },
+    { key = "anim", icon = "🕺" },
     { key = "webhook", icon = "🔔" },
     { key = "players", icon = "👥" },
 }
@@ -2104,6 +2175,46 @@ addInfoLabel(espTab, "Mostra um contorno colorido + nome/distância de cada joga
 
 espEnableBtn.MouseButton1Click:Connect(enableEsp)
 espDisableBtn.MouseButton1Click:Connect(disableEsp)
+
+-- --- ABA ANIM ---
+
+local animTab = tabFrames.anim
+addSectionLabel(animTab, "ANIMAÇÕES CUSTOM (IDLE / ANDAR / CORRER)", Color3.fromRGB(255, 200, 0))
+
+local idleBox = addTextField(animTab, "Animation ID do IDLE (parado):", animConfig.idleId)
+idleBox.FocusLost:Connect(function() animConfig.idleId = idleBox.Text end)
+
+local walkBox = addTextField(animTab, "Animation ID do ANDAR:", animConfig.walkId)
+walkBox.FocusLost:Connect(function() animConfig.walkId = walkBox.Text end)
+
+local runBox = addTextField(animTab, "Animation ID do CORRER:", animConfig.runId)
+runBox.FocusLost:Connect(function() animConfig.runId = runBox.Text end)
+
+local animToggleBtn = Instance.new("TextButton")
+animToggleBtn.Size = UDim2.new(1, 0, 0, 30)
+animToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+animToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+animToggleBtn.TextSize = 12
+animToggleBtn.Font = Enum.Font.GothamBold
+animToggleBtn.Text = "✗ APLICAR (só idle/andar/correr -- o resto continua normal)"
+animToggleBtn.LayoutOrder = tabOrder(animTab)
+animToggleBtn.Parent = animTab
+animToggleBtn.MouseButton1Click:Connect(function()
+    animConfig.enabled = not animConfig.enabled
+    animToggleBtn.BackgroundColor3 = animConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
+    animToggleBtn.Text = (animConfig.enabled and "✓ " or "✗ ") .. "APLICAR (só idle/andar/correr -- o resto continua normal)"
+    if animConfig.enabled then applyCustomAnimations() end
+end)
+
+local animReapplyBtn = addButton(animTab, "🔄 REAPLICAR (depois de mudar algum ID)", Color3.fromRGB(90, 90, 200), 32)
+animReapplyBtn.MouseButton1Click:Connect(function()
+    animConfig.enabled = true
+    animToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
+    animToggleBtn.Text = "✓ APLICAR (só idle/andar/correr -- o resto continua normal)"
+    applyCustomAnimations()
+end)
+
+addInfoLabel(animTab, "Só funciona com animações que você tem direito de usar (compradas, públicas, ou liberadas pelo jogo) -- é permissão do próprio Roblox no ID, o script não consegue destravar isso. Deixe um campo vazio pra não mexer naquele estado. Reaplica sozinho se você morrer/respawnar. Cole só o ID numérico (com ou sem \"rbxassetid://\").")
 
 -- --- ABA WEBHOOK ---
 
