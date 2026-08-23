@@ -1500,6 +1500,157 @@ UserInputService.InputBegan:Connect(function(input, processed)
 end)
 
 -- ========================================
+-- ESP: ver outros jogadores através de parede (100% visual, só na sua
+-- tela -- Highlight + BillboardGui são API padrão do Roblox, não depende
+-- de nenhuma função especial do executor).
+-- ========================================
+
+local espConfig = { enabled = false, maxDistance = 1000 }
+local espObjects = {}
+local espCharAddedConns = {}
+local espPlayerAddedConn = nil
+local espHeartbeatConn = nil
+local espStatusLabel
+
+local ESP_COLOR = Color3.fromRGB(255, 60, 60)
+
+local function removeEspFor(player)
+    local data = espObjects[player]
+    if not data then return end
+    if data.highlight then data.highlight:Destroy() end
+    if data.billboard then data.billboard:Destroy() end
+    espObjects[player] = nil
+end
+
+local function attachEspFor(player)
+    if player == LocalPlayer then return end
+    if espObjects[player] then return end
+
+    local character = player.Character
+    if not character then return end
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "HubESP"
+    highlight.FillTransparency = 0.75
+    highlight.OutlineTransparency = 0
+    highlight.FillColor = ESP_COLOR
+    highlight.OutlineColor = ESP_COLOR
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = character
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "HubESPTag"
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0, 160, 0, 36)
+    billboard.StudsOffset = Vector3.new(0, 1, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = character
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextStrokeTransparency = 0
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.Text = player.Name
+    label.Parent = billboard
+
+    espObjects[player] = { highlight = highlight, billboard = billboard, label = label, head = head }
+end
+
+local function espHeartbeatStep()
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+    for player, data in pairs(espObjects) do
+        if not player.Character or not data.head or not data.head.Parent then
+            removeEspFor(player)
+        else
+            local dist = nil
+            if myHrp then
+                local ok, d = pcall(function() return (data.head.Position - myHrp.Position).Magnitude end)
+                if ok then dist = d end
+            end
+
+            local visible = (not dist) or dist <= espConfig.maxDistance
+            data.highlight.Enabled = visible
+            data.billboard.Enabled = visible
+
+            if dist then
+                data.label.Text = player.Name .. " [" .. math.floor(dist) .. "m]"
+            else
+                data.label.Text = player.Name
+            end
+        end
+    end
+end
+
+local function enableEsp()
+    if espConfig.enabled then return end
+    espConfig.enabled = true
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            attachEspFor(plr)
+            espCharAddedConns[plr] = plr.CharacterAdded:Connect(function()
+                task.wait(0.3)
+                attachEspFor(plr)
+            end)
+        end
+    end
+
+    espPlayerAddedConn = Players.PlayerAdded:Connect(function(plr)
+        attachEspFor(plr)
+        espCharAddedConns[plr] = plr.CharacterAdded:Connect(function()
+            task.wait(0.3)
+            attachEspFor(plr)
+        end)
+    end)
+
+    espHeartbeatConn = RunService.Heartbeat:Connect(espHeartbeatStep)
+
+    if espStatusLabel then
+        espStatusLabel.Text = "Status: ATIVO"
+        espStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+    end
+    addLog("[ESP] Ativado")
+end
+
+local function disableEsp()
+    if not espConfig.enabled then return end
+    espConfig.enabled = false
+
+    if espHeartbeatConn then espHeartbeatConn:Disconnect() espHeartbeatConn = nil end
+    if espPlayerAddedConn then espPlayerAddedConn:Disconnect() espPlayerAddedConn = nil end
+
+    for plr, conn in pairs(espCharAddedConns) do
+        conn:Disconnect()
+    end
+    espCharAddedConns = {}
+
+    for plr in pairs(espObjects) do
+        removeEspFor(plr)
+    end
+
+    if espStatusLabel then
+        espStatusLabel.Text = "Status: DESATIVADO"
+        espStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+    end
+    addLog("[ESP] Desativado")
+end
+
+Players.PlayerRemoving:Connect(function(player)
+    if espCharAddedConns[player] then
+        espCharAddedConns[player]:Disconnect()
+        espCharAddedConns[player] = nil
+    end
+    removeEspFor(player)
+end)
+
+-- ========================================
 -- MENU: painel único responsivo com abas
 -- ========================================
 
@@ -1574,6 +1725,7 @@ local TAB_DEFS = {
     { key = "ramp", icon = "🎡" },
     { key = "games", icon = "🎮" },
     { key = "cam", icon = "📷" },
+    { key = "esp", icon = "🎯" },
     { key = "webhook", icon = "🔔" },
     { key = "players", icon = "👥" },
 }
@@ -1923,6 +2075,26 @@ addInfoLabel(camTab, "Botão direito + mover = olhar. WASD move, Space/Ctrl sobe
 
 camEnableBtn.MouseButton1Click:Connect(enableFreecam)
 camDisableBtn.MouseButton1Click:Connect(disableFreecam)
+
+-- --- ABA ESP ---
+
+local espTab = tabFrames.esp
+addSectionLabel(espTab, "ESP (VER JOGADORES)", Color3.fromRGB(255, 60, 60))
+local espEnableBtn, espDisableBtn = addTwoButtons(espTab, "▶ ATIVAR", Color3.fromRGB(0, 150, 0), "■ DESATIVAR", Color3.fromRGB(150, 0, 0))
+espStatusLabel = addFullLabel(espTab, "Status: DESATIVADO", Color3.fromRGB(100, 200, 100))
+local espDistanceInput = addTextField(espTab, "Distância máxima (studs):", espConfig.maxDistance)
+espDistanceInput.FocusLost:Connect(function()
+    local val = tonumber(espDistanceInput.Text)
+    if val and val > 0 then
+        espConfig.maxDistance = val
+    else
+        espDistanceInput.Text = tostring(espConfig.maxDistance)
+    end
+end)
+addInfoLabel(espTab, "Mostra um contorno colorido + nome/distância de cada jogador através de parede. 100% visual, só na SUA tela -- não afeta o jogo de ninguém, nem aparece pros outros.")
+
+espEnableBtn.MouseButton1Click:Connect(enableEsp)
+espDisableBtn.MouseButton1Click:Connect(disableEsp)
 
 -- --- ABA WEBHOOK ---
 
