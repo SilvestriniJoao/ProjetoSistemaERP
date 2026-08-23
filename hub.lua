@@ -1578,7 +1578,6 @@ local function makeTabScroll(key)
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     scroll.Visible = false
     scroll.Parent = contentArea
-    scroll._n = 0
 
     local padding = Instance.new("UIPadding")
     padding.PaddingLeft = UDim.new(0, 8)
@@ -1627,9 +1626,15 @@ end
 
 -- --- helpers de widget ---
 
+-- Instances do Roblox (ScrollingFrame etc.) não aceitam campos Lua soltos
+-- tipo tab._n = 0 -- por isso o contador de LayoutOrder de cada aba fica
+-- numa tabela à parte, indexada pela própria Instance da aba.
+local tabOrderCounters = {}
+
 local function tabOrder(tab)
-    tab._n = tab._n + 1
-    return tab._n
+    local n = (tabOrderCounters[tab] or 0) + 1
+    tabOrderCounters[tab] = n
+    return n
 end
 
 local function addSectionLabel(tab, text, color)
