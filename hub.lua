@@ -602,10 +602,15 @@ local function otherPlayersCount()
     return #Players:GetPlayers() - 1
 end
 
+-- Toggle geral: liga/desliga a pausa automática quando outro jogador entra
+-- na sala. Desativado, os loops ignoram totalmente outros jogadores.
+local autoPauseConfig = { enabled = true }
+
 local function makeAutoPauseGuards(cfg, getStatusLabel, startFn, stopFn, label)
     local autoResumeWhenAlone = false
 
     local function pauseIfRunning()
+        if not autoPauseConfig.enabled then return end
         if cfg.running then
             addLog("[" .. label .. "] [!] Outro jogador entrou, pausando...")
             autoResumeWhenAlone = true
@@ -627,7 +632,7 @@ local function makeAutoPauseGuards(cfg, getStatusLabel, startFn, stopFn, label)
     end
 
     local function guardedStart()
-        if otherPlayersCount() > 0 then
+        if autoPauseConfig.enabled and otherPlayersCount() > 0 then
             addLog("[" .. label .. "] [!] Tem outro jogador, vai iniciar quando ficar só.")
             autoResumeWhenAlone = true
             local statusLabel = getStatusLabel()
@@ -2236,7 +2241,23 @@ end
 rampStatusLabel = addFullLabel(rampTab, "Status: PARADO", Color3.fromRGB(100, 200, 100))
 rampCountLabel = addFullLabel(rampTab, "Teleportes forçados: 0", Color3.fromRGB(200, 200, 255))
 rampCycleLabel = addFullLabel(rampTab, "Ciclos completos: 0", Color3.fromRGB(255, 200, 100))
-addInfoLabel(rampTab, "Ativa o evento mais caro, teleporta no JumpCar até acabar, vende tudo e repete sozinho até PARAR. Pausa sozinho se outro jogador entrar na sala.")
+
+local autoPauseToggleBtn = Instance.new("TextButton")
+autoPauseToggleBtn.Size = UDim2.new(1, 0, 0, 26)
+autoPauseToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
+autoPauseToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+autoPauseToggleBtn.TextSize = 11
+autoPauseToggleBtn.Font = Enum.Font.GothamBold
+autoPauseToggleBtn.Text = "✓ PAUSAR SOZINHO SE OUTRO JOGADOR ENTRAR (Ramp/Memória/Bata o Slime)"
+autoPauseToggleBtn.LayoutOrder = tabOrder(rampTab)
+autoPauseToggleBtn.Parent = rampTab
+autoPauseToggleBtn.MouseButton1Click:Connect(function()
+    autoPauseConfig.enabled = not autoPauseConfig.enabled
+    autoPauseToggleBtn.BackgroundColor3 = autoPauseConfig.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
+    autoPauseToggleBtn.Text = (autoPauseConfig.enabled and "✓ " or "✗ ") .. "PAUSAR SOZINHO SE OUTRO JOGADOR ENTRAR (Ramp/Memória/Bata o Slime)"
+end)
+
+addInfoLabel(rampTab, "Ativa o evento mais caro, teleporta no JumpCar até acabar, vende tudo e repete sozinho até PARAR. Com a pausa automática LIGADA, os 3 loops (Ramp/Memória/Bata o Slime) pausam sozinhos se outro jogador entrar na sala e retomam quando ficar sozinho de novo. Desligada, eles ignoram outros jogadores e continuam rodando direto.")
 
 rampStartBtn.MouseButton1Click:Connect(rampGuardedStart)
 rampStopBtn.MouseButton1Click:Connect(rampGuardedStop)
