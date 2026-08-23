@@ -1660,8 +1660,6 @@ end)
 local animConfig = {
     enabled = false,
     idleId = "",
-    walkId = "",
-    runId = "",
 }
 
 local function normalizeAnimId(id)
@@ -1671,68 +1669,6 @@ local function normalizeAnimId(id)
         id = "rbxassetid://" .. id
     end
     return id
-end
-
-local function applyCustomAnimations()
-    if not animConfig.enabled then return end
-
-    local character = LocalPlayer.Character
-    if not character then return end
-
-    local animateScript = character:FindFirstChild("Animate")
-    if not animateScript then
-        addLog("[ANIM] [!] Script 'Animate' não encontrado no personagem")
-        return
-    end
-
-    -- Esse jogo NÃO usa o padrão clássico do Roblox (Folder + StringValue
-    -- com o ID como texto) -- o DIAGNOSTICAR revelou que cada estado
-    -- (idle/walk/run/etc) é um StringValue que serve de CONTAINER, com
-    -- instâncias de verdade da classe "Animation" dentro dele, e o ID
-    -- fica na property .AnimationId dessas instâncias. Troca todas as
-    -- Animation de dentro do container pro ID novo (cobre também estados
-    -- com várias animações num pool tipo dance/dance2/dance3).
-    local function setId(containerName, id)
-        local normalized = normalizeAnimId(id)
-        if not normalized then return end
-
-        local container = animateScript:FindFirstChild(containerName)
-        if not container then
-            addLog("[ANIM] [!] Não achei o container '" .. containerName .. "' (veja DIAGNOSTICAR)")
-            return
-        end
-
-        local count = 0
-        for _, child in ipairs(container:GetChildren()) do
-            if child:IsA("Animation") then
-                child.AnimationId = normalized
-                count = count + 1
-            end
-        end
-
-        if count > 0 then
-            addLog("[ANIM] " .. containerName .. ": " .. count .. " animação(ões) atualizada(s)")
-        else
-            addLog("[ANIM] [!] Nenhuma Animation dentro de '" .. containerName .. "' (veja DIAGNOSTICAR)")
-        end
-    end
-
-    setId("idle", animConfig.idleId)
-    setId("walk", animConfig.walkId)
-    setId("run", animConfig.runId)
-
-    -- Muitas versões do Animate só leem os IDs uma vez, quando carregam --
-    -- desliga e liga de novo força ele reler os valores novos.
-    local reloadOk, reloadErr = pcall(function()
-        animateScript.Disabled = true
-        task.wait()
-        animateScript.Disabled = false
-    end)
-    if not reloadOk then
-        addLog("[ANIM] [!] Erro ao recarregar o Animate: " .. tostring(reloadErr))
-    end
-
-    addLog("[ANIM] Animações customizadas aplicadas")
 end
 
 local function debugAnimateStructure()
@@ -1775,10 +1711,76 @@ local function debugAnimateStructure()
     end
 end
 
-LocalPlayer.CharacterAdded:Connect(function()
-    if animConfig.enabled then
-        task.wait(1)
-        applyCustomAnimations()
+-- Não precisa de um CharacterAdded manual aqui: o Heartbeat watcher do
+-- IDLE FORÇADO (abaixo) já detecta o personagem novo sozinho e reaplica
+-- assim que ele fica parado de novo.
+
+-- ========================================
+-- IDLE FORÇADO: toca separado do resto, com prioridade Action4 (a mais
+-- alta), looped, sem nunca reiniciar sozinho -- assim não briga com o
+-- esquema de troca aleatória do jogo (que causava aquele "soco" voltando
+-- pro idle normal). Só fica ativo enquanto o personagem tá parado de
+-- verdade -- solta sozinho assim que você anda/corre/pula, pra não
+-- atropelar o WalkAnim/RunAnim.
+-- ========================================
+
+local idleTrack = nil
+
+local function stopForcedIdle()
+    if idleTrack then
+        pcall(function() idleTrack:Stop() end)
+        idleTrack = nil
+    end
+end
+
+local function applyForcedIdle()
+    stopForcedIdle()
+
+    local id = normalizeAnimId(animConfig.idleId)
+    if not id then return end
+
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = humanoid
+    end
+
+    local anim = Instance.new("Animation")
+    anim.AnimationId = id
+
+    local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+    if not ok or not track then return end
+
+    track.Priority = Enum.AnimationPriority.Action4
+    track.Looped = true
+    track:Play()
+    idleTrack = track
+end
+
+RunService.Heartbeat:Connect(function()
+    if not animConfig.enabled or not animConfig.idleId or animConfig.idleId == "" then
+        if idleTrack then stopForcedIdle() end
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    local isStandingStill = humanoid.MoveDirection.Magnitude < 0.05
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Freefall
+
+    if isStandingStill then
+        if not idleTrack or not idleTrack.IsPlaying then
+            applyForcedIdle()
+        end
+    else
+        if idleTrack then stopForcedIdle() end
     end
 end)
 
@@ -2261,7 +2263,7 @@ espDisableBtn.MouseButton1Click:Connect(disableEsp)
 -- --- ABA ANIM ---
 
 local animTab = tabFrames.anim
-addSectionLabel(animTab, "ANIMAÇÕES CUSTOM (IDLE / ANDAR / CORRER)", Color3.fromRGB(255, 200, 0))
+addSectionLabel(animTab, "ANIMAÇÃO CUSTOM (SÓ IDLE)", Color3.fromRGB(255, 200, 0))
 
 local idleBox = addTextField(animTab, "Animation ID do IDLE (parado):", animConfig.idleId)
 idleBox.FocusLost:Connect(function() animConfig.idleId = idleBox.Text end)
@@ -2278,12 +2280,6 @@ captureBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local walkBox = addTextField(animTab, "Animation ID do ANDAR:", animConfig.walkId)
-walkBox.FocusLost:Connect(function() animConfig.walkId = walkBox.Text end)
-
-local runBox = addTextField(animTab, "Animation ID do CORRER:", animConfig.runId)
-runBox.FocusLost:Connect(function() animConfig.runId = runBox.Text end)
-
 local diagBtn = addButton(animTab, "🔍 DIAGNOSTICAR (mostra estrutura do Animate no console)", Color3.fromRGB(150, 100, 0), 32)
 diagBtn.MouseButton1Click:Connect(function() debugAnimateStructure() end)
 
@@ -2293,25 +2289,25 @@ animToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 animToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 animToggleBtn.TextSize = 12
 animToggleBtn.Font = Enum.Font.GothamBold
-animToggleBtn.Text = "✗ APLICAR (só idle/andar/correr -- o resto continua normal)"
+animToggleBtn.Text = "✗ APLICAR (só idle -- o resto continua normal)"
 animToggleBtn.LayoutOrder = tabOrder(animTab)
 animToggleBtn.Parent = animTab
 animToggleBtn.MouseButton1Click:Connect(function()
     animConfig.enabled = not animConfig.enabled
     animToggleBtn.BackgroundColor3 = animConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
-    animToggleBtn.Text = (animConfig.enabled and "✓ " or "✗ ") .. "APLICAR (só idle/andar/correr -- o resto continua normal)"
-    if animConfig.enabled then applyCustomAnimations() end
+    animToggleBtn.Text = (animConfig.enabled and "✓ " or "✗ ") .. "APLICAR (só idle -- o resto continua normal)"
+    if animConfig.enabled then applyForcedIdle() end
 end)
 
-local animReapplyBtn = addButton(animTab, "🔄 REAPLICAR (depois de mudar algum ID)", Color3.fromRGB(90, 90, 200), 32)
+local animReapplyBtn = addButton(animTab, "🔄 REAPLICAR (depois de mudar o ID)", Color3.fromRGB(90, 90, 200), 32)
 animReapplyBtn.MouseButton1Click:Connect(function()
     animConfig.enabled = true
     animToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
-    animToggleBtn.Text = "✓ APLICAR (só idle/andar/correr -- o resto continua normal)"
-    applyCustomAnimations()
+    animToggleBtn.Text = "✓ APLICAR (só idle -- o resto continua normal)"
+    applyForcedIdle()
 end)
 
-addInfoLabel(animTab, "Não precisa caçar o ID: toque o emote/animação que você já tem (comprado ou equipado) no jogo e clique CAPTURAR -- ele pega o que estiver tocando no seu personagem naquele instante e preenche o IDLE sozinho. Só funciona com animações que você tem direito de usar (compradas, públicas, ou liberadas pelo jogo) -- é permissão do próprio Roblox no ID, o script não consegue destravar isso. Deixe um campo vazio pra não mexer naquele estado. Reaplica sozinho se você morrer/respawnar.")
+addInfoLabel(animTab, "IDLE toca separado (prioridade alta, sem reiniciar sozinho) e só fica ativo enquanto você tá parado -- solta na hora que anda/corre/pula, então não briga com o jogo. ANDAR/CORRER voltaram a ser 100% do jogo (sem forçação). Não precisa caçar o ID: toque o emote/animação que você já tem e clique CAPTURAR pra preencher o IDLE sozinho. Só funciona com animações que você tem direito de usar -- é permissão do próprio Roblox no ID. Reaplica sozinho se você morrer/respawnar.")
 
 -- --- ABA WEBHOOK ---
 
