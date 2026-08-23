@@ -53,6 +53,20 @@ local eventShopActionRemote = findRemote("EventShopAction")
 local selectInventoryItemRemote = findRemote("SelectInventoryItem")
 local miniGameMemoryEvent = findRemote("MiniGame1MemoryEvent")
 local miniGameButton = Workspace:WaitForChild("MiniGame1Button")
+local leaderboardUpdateRemote = findRemote("LeaderboardUpdate")
+
+-- Top 5 leaderboard (Cash/renda base/carros de cada jogador) que o próprio
+-- jogo já transmite pra todo mundo -- só precisamos ouvir o mesmo remote,
+-- sem precisar construir nada do zero.
+local latestLeaderboardData = nil
+local refreshLeaderboardUI -- atribuída lá na aba JOGADORES, mais abaixo
+
+if leaderboardUpdateRemote then
+    leaderboardUpdateRemote.OnClientEvent:Connect(function(list)
+        latestLeaderboardData = list
+        if refreshLeaderboardUI then refreshLeaderboardUI() end
+    end)
+end
 
 -- ========================================
 -- DISCORD WEBHOOK
@@ -2015,6 +2029,83 @@ Players.PlayerAdded:Connect(function() task.wait(0.1) rebuildPlayerRows() end)
 Players.PlayerRemoving:Connect(function() task.wait(0.15) rebuildPlayerRows() end)
 
 rebuildPlayerRows()
+
+addDivider(playersTab)
+addSectionLabel(playersTab, "🏆 TOP 5 (CASH) - AO VIVO", Color3.fromRGB(255, 215, 0))
+addInfoLabel(playersTab, "Vem direto do placar Top 5 que o servidor já manda pra todo mundo (remote LeaderboardUpdate) -- não precisei construir nada, só escutei o mesmo remote que o próprio jogo usa pra desenhar aquele painel.")
+
+local leaderboardRowsContainer = Instance.new("Frame")
+leaderboardRowsContainer.Size = UDim2.new(1, 0, 0, 0)
+leaderboardRowsContainer.AutomaticSize = Enum.AutomaticSize.Y
+leaderboardRowsContainer.BackgroundTransparency = 1
+leaderboardRowsContainer.LayoutOrder = tabOrder(playersTab)
+leaderboardRowsContainer.Parent = playersTab
+
+local leaderboardRowsLayout = Instance.new("UIListLayout")
+leaderboardRowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+leaderboardRowsLayout.Padding = UDim.new(0, 3)
+leaderboardRowsLayout.Parent = leaderboardRowsContainer
+
+local function shortNumberDisplay(n)
+    n = tonumber(n) or 0
+    local abs = math.abs(n)
+    if abs >= 1e12 then
+        return string.format("%.2fT", n / 1e12)
+    elseif abs >= 1e9 then
+        return string.format("%.2fB", n / 1e9)
+    elseif abs >= 1e6 then
+        return string.format("%.2fM", n / 1e6)
+    elseif abs >= 1e3 then
+        return string.format("%.2fK", n / 1e3)
+    else
+        return tostring(math.floor(n))
+    end
+end
+
+refreshLeaderboardUI = function()
+    for _, child in ipairs(leaderboardRowsContainer:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    local list = latestLeaderboardData or {}
+    if #list == 0 then
+        local emptyLbl = Instance.new("TextLabel")
+        emptyLbl.Size = UDim2.new(1, 0, 0, 20)
+        emptyLbl.BackgroundTransparency = 1
+        emptyLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
+        emptyLbl.TextSize = 10
+        emptyLbl.Font = Enum.Font.Gotham
+        emptyLbl.Text = "Aguardando dados do servidor..."
+        emptyLbl.LayoutOrder = 1
+        emptyLbl.Parent = leaderboardRowsContainer
+        return
+    end
+
+    for i, entry in ipairs(list) do
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 24)
+        row.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        row.LayoutOrder = i
+        row.Parent = leaderboardRowsContainer
+
+        local name = tostring(entry.Name or entry.DisplayName or "?")
+        if entry.VIP then name = "[VIP] " .. name end
+        local cashText = "$" .. shortNumberDisplay(entry.Cash or 0)
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -8, 1, 0)
+        lbl.Position = UDim2.new(0, 4, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = Color3.new(1, 1, 1)
+        lbl.TextSize = 10
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = "#" .. tostring(entry.Position or i) .. "  " .. name .. "  —  " .. cashText
+        lbl.Parent = row
+    end
+end
+
+refreshLeaderboardUI()
 
 -- --- RESPONSIVO + MINIMIZAR ---
 
