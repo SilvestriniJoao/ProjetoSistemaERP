@@ -1720,6 +1720,26 @@ LocalPlayer.CharacterAdded:Connect(function()
     end
 end)
 
+-- Pra não precisar caçar o ID manualmente: toca o emote/animação que
+-- você já tem (equipado ou comprado no jogo) e captura o que tiver
+-- tocando no seu Humanoid nesse instante.
+local function getCurrentPlayingAnimId()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    if not animator then return nil end
+
+    local ok, tracks = pcall(function() return animator:GetPlayingAnimationTracks() end)
+    if not ok or not tracks then return nil end
+
+    for _, track in ipairs(tracks) do
+        if track.Animation and track.Animation.AnimationId and track.Animation.AnimationId ~= "" then
+            return track.Animation.AnimationId
+        end
+    end
+    return nil
+end
+
 -- ========================================
 -- MENU: painel único responsivo com abas
 --
@@ -2184,6 +2204,18 @@ addSectionLabel(animTab, "ANIMAÇÕES CUSTOM (IDLE / ANDAR / CORRER)", Color3.fr
 local idleBox = addTextField(animTab, "Animation ID do IDLE (parado):", animConfig.idleId)
 idleBox.FocusLost:Connect(function() animConfig.idleId = idleBox.Text end)
 
+local captureBtn = addButton(animTab, "📋 CAPTURAR ANIMAÇÃO ATUAL → IDLE (toque o emote antes de clicar)", Color3.fromRGB(90, 90, 200), 32)
+captureBtn.MouseButton1Click:Connect(function()
+    local id = getCurrentPlayingAnimId()
+    if id then
+        animConfig.idleId = id
+        idleBox.Text = id
+        addLog("[ANIM] Capturado: " .. id)
+    else
+        addLog("[ANIM] [!] Nenhuma animação tocando agora -- toque o emote primeiro")
+    end
+end)
+
 local walkBox = addTextField(animTab, "Animation ID do ANDAR:", animConfig.walkId)
 walkBox.FocusLost:Connect(function() animConfig.walkId = walkBox.Text end)
 
@@ -2214,7 +2246,7 @@ animReapplyBtn.MouseButton1Click:Connect(function()
     applyCustomAnimations()
 end)
 
-addInfoLabel(animTab, "Só funciona com animações que você tem direito de usar (compradas, públicas, ou liberadas pelo jogo) -- é permissão do próprio Roblox no ID, o script não consegue destravar isso. Deixe um campo vazio pra não mexer naquele estado. Reaplica sozinho se você morrer/respawnar. Cole só o ID numérico (com ou sem \"rbxassetid://\").")
+addInfoLabel(animTab, "Não precisa caçar o ID: toque o emote/animação que você já tem (comprado ou equipado) no jogo e clique CAPTURAR -- ele pega o que estiver tocando no seu personagem naquele instante e preenche o IDLE sozinho. Só funciona com animações que você tem direito de usar (compradas, públicas, ou liberadas pelo jogo) -- é permissão do próprio Roblox no ID, o script não consegue destravar isso. Deixe um campo vazio pra não mexer naquele estado. Reaplica sozinho se você morrer/respawnar.")
 
 -- --- ABA WEBHOOK ---
 
