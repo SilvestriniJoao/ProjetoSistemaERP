@@ -1652,7 +1652,16 @@ end)
 
 -- ========================================
 -- MENU: painel único responsivo com abas
+--
+-- Tudo isso vai dentro de uma função própria (chamada logo em seguida) só
+-- por causa de um limite real do Luau: uma única função só aceita até 200
+-- variáveis locais, e o resto do script (CORE) sozinho já usa quase todas.
+-- Como essa função continua definida no mesmo lugar do arquivo, ela ainda
+-- enxerga e escreve normalmente em tudo que já existia antes (rampStatusLabel,
+-- alertKeywords, etc.) -- só isola o REGISTRO das variáveis daqui de dentro.
 -- ========================================
+
+local function setupMenu()
 
 local hubCamera = Workspace.CurrentCamera
 
@@ -2322,3 +2331,7 @@ selectTab("ramp")
 
 addLog("Hub carregado. Use as abas pra navegar. F5 liga/desliga a Free Cam a qualquer momento.")
 print("[+] MEGA RAMP HUB carregado!")
+
+end
+
+setupMenu()
