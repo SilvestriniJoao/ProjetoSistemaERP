@@ -1685,32 +1685,94 @@ local function applyCustomAnimations()
         return
     end
 
-    local function setId(pathNames, id)
+    -- Esse jogo NÃO usa o padrão clássico do Roblox (Folder + StringValue
+    -- com o ID como texto) -- o DIAGNOSTICAR revelou que cada estado
+    -- (idle/walk/run/etc) é um StringValue que serve de CONTAINER, com
+    -- instâncias de verdade da classe "Animation" dentro dele, e o ID
+    -- fica na property .AnimationId dessas instâncias. Troca todas as
+    -- Animation de dentro do container pro ID novo (cobre também estados
+    -- com várias animações num pool tipo dance/dance2/dance3).
+    local function setId(containerName, id)
         local normalized = normalizeAnimId(id)
         if not normalized then return end
-        local obj = animateScript
-        for _, name in ipairs(pathNames) do
-            obj = obj and obj:FindFirstChild(name)
+
+        local container = animateScript:FindFirstChild(containerName)
+        if not container then
+            addLog("[ANIM] [!] Não achei o container '" .. containerName .. "' (veja DIAGNOSTICAR)")
+            return
         end
-        if obj and obj:IsA("StringValue") then
-            obj.Value = normalized
+
+        local count = 0
+        for _, child in ipairs(container:GetChildren()) do
+            if child:IsA("Animation") then
+                child.AnimationId = normalized
+                count = count + 1
+            end
+        end
+
+        if count > 0 then
+            addLog("[ANIM] " .. containerName .. ": " .. count .. " animação(ões) atualizada(s)")
+        else
+            addLog("[ANIM] [!] Nenhuma Animation dentro de '" .. containerName .. "' (veja DIAGNOSTICAR)")
         end
     end
 
-    setId({ "idle", "Animation1" }, animConfig.idleId)
-    setId({ "idle", "Animation2" }, animConfig.idleId)
-    setId({ "walk", "WalkAnim" }, animConfig.walkId)
-    setId({ "run", "RunAnim" }, animConfig.runId)
+    setId("idle", animConfig.idleId)
+    setId("walk", animConfig.walkId)
+    setId("run", animConfig.runId)
 
     -- Muitas versões do Animate só leem os IDs uma vez, quando carregam --
     -- desliga e liga de novo força ele reler os valores novos.
-    pcall(function()
+    local reloadOk, reloadErr = pcall(function()
         animateScript.Disabled = true
         task.wait()
         animateScript.Disabled = false
     end)
+    if not reloadOk then
+        addLog("[ANIM] [!] Erro ao recarregar o Animate: " .. tostring(reloadErr))
+    end
 
     addLog("[ANIM] Animações customizadas aplicadas")
+end
+
+local function debugAnimateStructure()
+    local character = LocalPlayer.Character
+    if not character then
+        addLog("[ANIM] [!] Sem personagem")
+        return
+    end
+
+    local animateScript = character:FindFirstChild("Animate")
+    if not animateScript then
+        addLog("[ANIM] [!] Script 'Animate' NÃO existe nesse personagem")
+        return
+    end
+
+    local lines = { "Estrutura do Animate (" .. animateScript.ClassName .. "):" }
+
+    local function dump(obj, depth)
+        for _, child in ipairs(obj:GetChildren()) do
+            local extra = ""
+            if child:IsA("Animation") then
+                extra = " -> AnimationId=" .. tostring(child.AnimationId)
+            elseif child:IsA("StringValue") then
+                extra = " = " .. tostring(child.Value)
+            end
+            table.insert(lines, string.rep("  ", depth) .. child.Name .. " (" .. child.ClassName .. ")" .. extra)
+            dump(child, depth + 1)
+        end
+    end
+    dump(animateScript, 1)
+
+    local fullText = table.concat(lines, "\n")
+    print("[ANIM-DEBUG]\n" .. fullText)
+
+    if typeof(setclipboard) == "function" then
+        local copied = pcall(setclipboard, fullText)
+        addLog(copied and "[ANIM] Estrutura copiada pro clipboard! (também tá no console)" or "[ANIM] [!] setclipboard falhou -- veja no console")
+    else
+        addLog("[ANIM] [!] Esse executor não suporta setclipboard -- veja no console mesmo")
+    end
 end
 
 LocalPlayer.CharacterAdded:Connect(function()
@@ -2221,6 +2283,9 @@ walkBox.FocusLost:Connect(function() animConfig.walkId = walkBox.Text end)
 
 local runBox = addTextField(animTab, "Animation ID do CORRER:", animConfig.runId)
 runBox.FocusLost:Connect(function() animConfig.runId = runBox.Text end)
+
+local diagBtn = addButton(animTab, "🔍 DIAGNOSTICAR (mostra estrutura do Animate no console)", Color3.fromRGB(150, 100, 0), 32)
+diagBtn.MouseButton1Click:Connect(function() debugAnimateStructure() end)
 
 local animToggleBtn = Instance.new("TextButton")
 animToggleBtn.Size = UDim2.new(1, 0, 0, 30)
