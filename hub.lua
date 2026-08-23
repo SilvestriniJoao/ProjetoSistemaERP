@@ -1651,6 +1651,67 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- ========================================
+-- IMPULSO DA PISTA (CARRO): segura SHIFT pra empurrar o carro pra frente
+-- com força extra, solta e o impulso para na hora -- reaproveita o mesmo
+-- findPlayerCarModel() já usado pelo ciclo do Ramp.
+-- ========================================
+
+local carBoostConfig = { enabled = false, force = 120, holding = false }
+local carStatusLabel
+
+local function getCarMainPart(car)
+    if not car then return nil end
+    return car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+        carBoostConfig.holding = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+        carBoostConfig.holding = false
+    end
+end)
+
+RunService.Heartbeat:Connect(function(dt)
+    if not carBoostConfig.enabled then
+        if carStatusLabel then
+            carStatusLabel.Text = "Status: DESLIGADO"
+            carStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+        end
+        return
+    end
+
+    if not carBoostConfig.holding then
+        if carStatusLabel then
+            carStatusLabel.Text = "Status: LIGADO (segure SHIFT)"
+            carStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+        end
+        return
+    end
+
+    local carPart = getCarMainPart(findPlayerCarModel())
+    if not carPart then
+        if carStatusLabel then
+            carStatusLabel.Text = "Status: LIGADO (carro não encontrado)"
+            carStatusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
+        end
+        return
+    end
+
+    local forward = carPart.CFrame.LookVector
+    carPart.AssemblyLinearVelocity = carPart.AssemblyLinearVelocity + forward * carBoostConfig.force * dt
+
+    if carStatusLabel then
+        carStatusLabel.Text = "Status: IMPULSIONANDO"
+        carStatusLabel.TextColor3 = Color3.fromRGB(0, 220, 220)
+    end
+end)
+
+-- ========================================
 -- ANIMAÇÕES CUSTOM: edita os IDs de idle/andar/correr DENTRO do script
 -- "Animate" do personagem (ele tem um slot separado pra cada estado), em
 -- vez de forçar uma animação por cima de tudo -- assim pular/etc continua
@@ -1888,6 +1949,7 @@ local TAB_DEFS = {
     { key = "ramp", icon = "🎡" },
     { key = "games", icon = "🎮" },
     { key = "cam", icon = "📷" },
+    { key = "car", icon = "🚗" },
     { key = "esp", icon = "🎯" },
     { key = "anim", icon = "🕺" },
     { key = "webhook", icon = "🔔" },
@@ -2239,6 +2301,40 @@ addInfoLabel(camTab, "Botão direito + mover = olhar. WASD move, Space/Ctrl sobe
 
 camEnableBtn.MouseButton1Click:Connect(enableFreecam)
 camDisableBtn.MouseButton1Click:Connect(disableFreecam)
+
+-- --- ABA CARRO ---
+
+local carTab = tabFrames.car
+addSectionLabel(carTab, "IMPULSO DA PISTA (BOOST)", Color3.fromRGB(0, 220, 220))
+
+local carForceInput = addTextField(carTab, "Força do impulso:", carBoostConfig.force)
+carForceInput.FocusLost:Connect(function()
+    local val = tonumber(carForceInput.Text)
+    if val and val > 0 then
+        carBoostConfig.force = val
+    else
+        carForceInput.Text = tostring(carBoostConfig.force)
+    end
+end)
+
+local carToggleBtn = Instance.new("TextButton")
+carToggleBtn.Size = UDim2.new(1, 0, 0, 30)
+carToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+carToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+carToggleBtn.TextSize = 12
+carToggleBtn.Font = Enum.Font.GothamBold
+carToggleBtn.Text = "✗ ATIVAR IMPULSO (segure SHIFT pra usar)"
+carToggleBtn.LayoutOrder = tabOrder(carTab)
+carToggleBtn.Parent = carTab
+carToggleBtn.MouseButton1Click:Connect(function()
+    carBoostConfig.enabled = not carBoostConfig.enabled
+    carToggleBtn.BackgroundColor3 = carBoostConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
+    carToggleBtn.Text = (carBoostConfig.enabled and "✓ " or "✗ ") .. "ATIVAR IMPULSO (segure SHIFT pra usar)"
+end)
+
+carStatusLabel = addFullLabel(carTab, "Status: DESLIGADO", Color3.fromRGB(100, 200, 100))
+
+addInfoLabel(carTab, "Com o impulso ATIVADO, segurar SHIFT empurra o carro pra frente com força extra a cada instante -- solta e para na hora, sem esperar desacelerar. Só funciona enquanto você está dentro do carro na pista. Ajuste a força se sentir fraco ou forte demais.")
 
 -- --- ABA ESP ---
 
