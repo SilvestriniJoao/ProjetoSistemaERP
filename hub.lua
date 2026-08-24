@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
 local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -20,6 +21,147 @@ print("=== MEGA RAMP HUB ===")
 local function addLog(msg)
     print("[HUB] " .. msg)
 end
+
+-- ========================================
+-- IDIOMA: só traduz nomes de abas e os botões/textos mais comuns
+-- (Iniciar/Parar/Ativar/Desativar etc). Textos longos de explicação e as
+-- mensagens de log continuam em português. Trocar o idioma na aba
+-- Configurações só aplica de verdade na PRÓXIMA vez que o hub carregar
+-- (rode o script de novo) -- os botões já criados não se retraduzem
+-- sozinhos ao vivo.
+-- ========================================
+
+local Language = { current = "pt" }
+
+local T = {
+    tab_ramp = { pt = "Rampa", en = "Ramp", es = "Rampa" },
+    tab_games = { pt = "Jogos", en = "Games", es = "Juegos" },
+    tab_cam = { pt = "Camera", en = "Camera", es = "Camara" },
+    tab_car = { pt = "Carro", en = "Car", es = "Auto" },
+    tab_props = { pt = "Objetos", en = "Props", es = "Objetos" },
+    tab_esp = { pt = "Jogadores", en = "Players", es = "Jugadores" },
+    tab_anim = { pt = "Animacao", en = "Animation", es = "Animacion" },
+    tab_webhook = { pt = "Webhook", en = "Webhook", es = "Webhook" },
+    tab_players = { pt = "Espectar", en = "Spectate", es = "Espectar" },
+    tab_slimes = { pt = "Inventario", en = "Inventory", es = "Inventario" },
+    tab_settings = { pt = "Configuracoes", en = "Settings", es = "Ajustes" },
+
+    start = { pt = "Iniciar", en = "Start", es = "Iniciar" },
+    stop = { pt = "Parar", en = "Stop", es = "Detener" },
+    enable = { pt = "Ativar", en = "Enable", es = "Activar" },
+    disable = { pt = "Desativar", en = "Disable", es = "Desactivar" },
+    play = { pt = "Jogar", en = "Play", es = "Jugar" },
+    settings_title = { pt = "IDIOMA", en = "LANGUAGE", es = "IDIOMA" },
+    settings_info = {
+        pt = "Muda o idioma das abas, botões e status. Textos longos de explicação continuam em português. Feche e abra o hub de novo (rode o script) pra aplicar direito em tudo.",
+        en = "Changes the language of tabs, buttons and status. Long explanation texts stay in Portuguese. Close and reopen the hub (run the script again) to apply it everywhere.",
+        es = "Cambia el idioma de las pestañas, botones y estado. Los textos largos de explicación siguen en portugués. Cierra y abre el hub de nuevo (ejecuta el script otra vez) para aplicarlo en todo.",
+    },
+
+    -- Status dinâmicos (usados tanto no CORE quanto no menu)
+    status_stopped = { pt = "Status: PARADO", en = "Status: STOPPED", es = "Estado: DETENIDO" },
+    status_running = { pt = "Status: RODANDO", en = "Status: RUNNING", es = "Estado: CORRIENDO" },
+    status_activating_event = { pt = "Status: ATIVANDO EVENTO...", en = "Status: ACTIVATING EVENT...", es = "Estado: ACTIVANDO EVENTO..." },
+    status_teleporting = { pt = "Status: TELEPORTANDO (evento ativo)", en = "Status: TELEPORTING (event active)", es = "Estado: TELETRANSPORTANDO (evento activo)" },
+    status_selling = { pt = "Status: VENDENDO SLIMES...", en = "Status: SELLING SLIMES...", es = "Estado: VENDIENDO SLIMES..." },
+    status_paused_other = { pt = "Status: PAUSADO (outro jogador)", en = "Status: PAUSED (other player)", es = "Estado: PAUSADO (otro jugador)" },
+    status_active = { pt = "Status: ATIVO", en = "Status: ACTIVE", es = "Estado: ACTIVO" },
+    status_inactive = { pt = "Status: DESATIVADO", en = "Status: DISABLED", es = "Estado: DESACTIVADO" },
+    status_off = { pt = "Status: DESLIGADO", en = "Status: OFF", es = "Estado: APAGADO" },
+    status_on_hold_shift = { pt = "Status: LIGADO (segure SHIFT)", en = "Status: ON (hold SHIFT)", es = "Estado: ACTIVADO (mantén SHIFT)" },
+    status_on_no_car = { pt = "Status: LIGADO (carro não encontrado)", en = "Status: ON (car not found)", es = "Estado: ACTIVADO (auto no encontrado)" },
+    status_boosting = { pt = "Status: IMPULSIONANDO", en = "Status: BOOSTING", es = "Estado: IMPULSANDO" },
+    status_freecam_active = { pt = "Status: ATIVO (F5 pra sair)", en = "Status: ACTIVE (F5 to exit)", es = "Estado: ACTIVO (F5 para salir)" },
+    status_none_normal_cam = { pt = "Status: NENHUM (câmera normal)", en = "Status: NONE (normal camera)", es = "Estado: NINGUNO (camara normal)" },
+    status_watching = { pt = "Status: ASSISTINDO ", en = "Status: WATCHING ", es = "Estado: VIENDO " },
+    label_teleports_forced = { pt = "Teleportes forçados: ", en = "Forced teleports: ", es = "Teletransportes forzados: " },
+    label_cycles_complete = { pt = "Ciclos completos: ", en = "Cycles complete: ", es = "Ciclos completos: " },
+    label_rounds = { pt = "Rodadas: ", en = "Rounds: ", es = "Rondas: " },
+    label_selected = { pt = "Selecionado: ", en = "Selected: ", es = "Seleccionado: " },
+    label_none_selected = { pt = "Nenhum objeto selecionado", en = "No object selected", es = "Ningun objeto seleccionado" },
+
+    -- Seções e botões
+    sec_ramp_cycle = { pt = "CICLO EVENTO MAIS CARO", en = "MOST EXPENSIVE EVENT CYCLE", es = "CICLO DEL EVENTO MAS CARO" },
+    btn_alert_rainbow = { pt = "Alerta: Limited Rainbow", en = "Alert: Limited Rainbow", es = "Alerta: Limited Rainbow" },
+    btn_alert_all_limited = { pt = "Alerta: Todos os Limited", en = "Alert: All Limiteds", es = "Alerta: Todos los Limited" },
+    btn_sell_all = { pt = "Vender Todos os Slimes (manual)", en = "Sell All Slimes (manual)", es = "Vender Todos los Slimes (manual)" },
+    lbl_checkpoint = { pt = "Checkpoint (X, Y, Z):", en = "Checkpoint (X, Y, Z):", es = "Checkpoint (X, Y, Z):" },
+    btn_auto_pause = { pt = "Pausar Sozinho se Outro Jogador Entrar", en = "Auto-Pause if Another Player Joins", es = "Pausar Solo si Otro Jugador Entra" },
+    sec_memory = { pt = "MEMÓRIA DE SLIME", en = "SLIME MEMORY", es = "MEMORIA DE SLIME" },
+    sec_hitslime = { pt = "BATA O SLIME", en = "HIT THE SLIME", es = "GOLPEA AL SLIME" },
+    lbl_seconds_per_round = { pt = "Segundos por rodada (nível):", en = "Seconds per round (level):", es = "Segundos por ronda (nivel):" },
+    sec_freecam = { pt = "FREE CAM", en = "FREE CAM", es = "CAMARA LIBRE" },
+    lbl_freecam_speed = { pt = "Velocidade base (studs/s):", en = "Base speed (studs/s):", es = "Velocidad base (studs/s):" },
+    sec_car_boost = { pt = "IMPULSO DA PISTA (BOOST)", en = "TRACK BOOST", es = "IMPULSO DE LA PISTA" },
+    lbl_boost_force = { pt = "Força do impulso:", en = "Boost force:", es = "Fuerza del impulso:" },
+    btn_enable_boost = { pt = "Ativar Impulso (segure SHIFT pra usar)", en = "Enable Boost (hold SHIFT to use)", es = "Activar Impulso (manten SHIFT para usar)" },
+    sec_clone_map = { pt = "CLONAR OBJETO DO MAPA (mira no centro)", en = "CLONE MAP OBJECT (aim in center)", es = "CLONAR OBJETO DEL MAPA (mira al centro)" },
+    btn_show_crosshair = { pt = "Mostrar Mira no Centro da Tela", en = "Show Crosshair in Screen Center", es = "Mostrar Mira en el Centro de la Pantalla" },
+    btn_clone_looked = { pt = "Clonar o que Estou Olhando (na mira)", en = "Clone What I'm Looking At (aim)", es = "Clonar lo que Estoy Mirando (mira)" },
+    lbl_aim_distance = { pt = "Distância máxima da mira (studs):", en = "Max aim distance (studs):", es = "Distancia maxima de la mira (studs):" },
+    sec_selected_object = { pt = "OBJETO SELECIONADO", en = "SELECTED OBJECT", es = "OBJETO SELECCIONADO" },
+    btn_select_mode = { pt = "Modo Seleção (clique num objeto clonado)", en = "Select Mode (click a cloned object)", es = "Modo Seleccion (clic en un objeto clonado)" },
+    btn_carry = { pt = "Segurar na Mão (na frente da câmera)", en = "Carry in Hand (in front of camera)", es = "Sostener en Mano (frente a la camara)" },
+    btn_attach = { pt = "Grudar no que Estou Olhando", en = "Attach to What I'm Looking At", es = "Pegar a lo que Estoy Mirando" },
+    btn_detach = { pt = "Soltar", en = "Detach", es = "Soltar" },
+    btn_toggle_anchor = { pt = "Ancorar/Desancorar", en = "Anchor/Unanchor", es = "Anclar/Desanclar" },
+    btn_shrink = { pt = "Diminuir", en = "Shrink", es = "Reducir" },
+    btn_grow = { pt = "Aumentar", en = "Grow", es = "Aumentar" },
+    btn_delete = { pt = "Deletar", en = "Delete", es = "Eliminar" },
+    btn_clear_all = { pt = "Limpar Tudo", en = "Clear All", es = "Limpiar Todo" },
+    sec_time_of_day = { pt = "HORÁRIO (DIA/NOITE -- SÓ VOCÊ VÊ)", en = "TIME OF DAY (ONLY YOU SEE)", es = "HORARIO (SOLO TU VES)" },
+    btn_keep_fixed = { pt = "Manter Fixo (senão o jogo pode voltar o horário sozinho)", en = "Keep Fixed (game may revert time on its own)", es = "Mantener Fijo (el juego puede revertir la hora solo)" },
+    btn_dawn = { pt = "Amanhecer", en = "Dawn", es = "Amanecer" },
+    btn_day = { pt = "Dia", en = "Day", es = "Dia" },
+    btn_dusk = { pt = "Entardecer", en = "Dusk", es = "Atardecer" },
+    btn_night = { pt = "Noite", en = "Night", es = "Noche" },
+    lbl_exact_hour = { pt = "Hora exata (0-24):", en = "Exact hour (0-24):", es = "Hora exacta (0-24):" },
+    sec_esp = { pt = "ESP (VER JOGADORES)", en = "ESP (SEE PLAYERS)", es = "ESP (VER JUGADORES)" },
+    lbl_esp_distance = { pt = "Distância máxima (studs):", en = "Max distance (studs):", es = "Distancia maxima (studs):" },
+    sec_anim_idle = { pt = "ANIMAÇÃO CUSTOM (SÓ IDLE)", en = "CUSTOM ANIMATION (IDLE ONLY)", es = "ANIMACION CUSTOM (SOLO IDLE)" },
+    lbl_idle_id = { pt = "Animation ID do IDLE (parado):", en = "IDLE Animation ID (standing):", es = "ID de Animacion IDLE (quieto):" },
+    btn_capture_anim = { pt = "Capturar Animação Atual para o Idle (toque o emote antes de clicar)", en = "Capture Current Animation for Idle (play the emote before clicking)", es = "Capturar Animacion Actual para el Idle (reproduce el emote antes de hacer clic)" },
+    btn_diagnose = { pt = "Diagnosticar (mostra estrutura do Animate no console)", en = "Diagnose (shows Animate structure in console)", es = "Diagnosticar (muestra la estructura del Animate en consola)" },
+    btn_apply_idle = { pt = "Aplicar (só idle -- o resto continua normal)", en = "Apply (idle only -- the rest stays normal)", es = "Aplicar (solo idle -- el resto sigue normal)" },
+    btn_reapply = { pt = "Reaplicar (depois de mudar o ID)", en = "Reapply (after changing the ID)", es = "Reaplicar (despues de cambiar el ID)" },
+    sec_discord_webhook = { pt = "DISCORD WEBHOOK", en = "DISCORD WEBHOOK", es = "DISCORD WEBHOOK" },
+    lbl_webhook_url = { pt = "URL do Webhook:", en = "Webhook URL:", es = "URL del Webhook:" },
+    btn_test = { pt = "Testar", en = "Test", es = "Probar" },
+    sec_notify_when = { pt = "NOTIFICAR QUANDO:", en = "NOTIFY WHEN:", es = "NOTIFICAR CUANDO:" },
+    toggle_find_limited = { pt = "Achar Limited/Rainbow", en = "Find Limited/Rainbow", es = "Encontrar Limited/Rainbow" },
+    toggle_win_memory = { pt = "Ganhar na Memória", en = "Win at Memory", es = "Ganar en Memoria" },
+    toggle_win_hitslime = { pt = "Ganhar no Bata o Slime", en = "Win at Hit the Slime", es = "Ganar en Golpea al Slime" },
+    toggle_activate_event = { pt = "Ativar evento (Ramp)", en = "Activate event (Ramp)", es = "Activar evento (Ramp)" },
+    sec_players_in_match = { pt = "JOGADORES NA PARTIDA", en = "PLAYERS IN MATCH", es = "JUGADORES EN LA PARTIDA" },
+    btn_stop_spectate = { pt = "Parar Spectate", en = "Stop Spectate", es = "Detener Espectar" },
+    btn_spectate = { pt = "Spectate", en = "Spectate", es = "Espectar" },
+    lbl_no_other_players = { pt = "Nenhum outro jogador na partida.", en = "No other players in the match.", es = "Ningun otro jugador en la partida." },
+    sec_top5 = { pt = "TOP 5 (CASH) - AO VIVO", en = "TOP 5 (CASH) - LIVE", es = "TOP 5 (CASH) - EN VIVO" },
+    lbl_waiting_server = { pt = "Aguardando dados do servidor...", en = "Waiting for server data...", es = "Esperando datos del servidor..." },
+    sec_equip_by_index = { pt = "EQUIPAR SLIME (POR ÍNDICE)", en = "EQUIP SLIME (BY INDEX)", es = "EQUIPAR SLIME (POR INDICE)" },
+    lbl_waiting_inventory = { pt = "Aguardando dados do inventário... (abra o inventário no jogo 1x se não vier nada)", en = "Waiting for inventory data... (open the inventory in-game once if nothing shows)", es = "Esperando datos del inventario... (abre el inventario en el juego una vez si no aparece nada)" },
+    sec_manual_equip = { pt = "EQUIPAR POR ÍNDICE MANUAL", en = "MANUAL EQUIP BY INDEX", es = "EQUIPAR POR INDICE MANUAL" },
+    lbl_index_manual = { pt = "Índice (0 = tirar da mão):", en = "Index (0 = unequip):", es = "Indice (0 = quitar de la mano):" },
+    btn_equip_index = { pt = "Equipar Esse Índice", en = "Equip This Index", es = "Equipar Este Indice" },
+    sec_send_gift = { pt = "ENVIAR GIFT", en = "SEND GIFT", es = "ENVIAR REGALO" },
+    lbl_gift_target = { pt = "Nome (ou parte) do jogador de destino:", en = "Target player's name (or part of it):", es = "Nombre (o parte) del jugador destino:" },
+    lbl_gift_index = { pt = "Índice do slime a doar:", en = "Index of the slime to gift:", es = "Indice del slime a regalar:" },
+    btn_send_gift = { pt = "Enviar Gift", en = "Send Gift", es = "Enviar Regalo" },
+    lbl_equipped = { pt = "Equipado", en = "Equipped", es = "Equipado" },
+    lbl_equip = { pt = "Equipar", en = "Equip", es = "Equipar" },
+}
+
+local function t(key)
+    local entry = T[key]
+    if not entry then return key end
+    return entry[Language.current] or entry.pt
+end
+
+-- Guarda a última aba aberta pra reabrir nela quando o menu inteiro é
+-- reconstruído (troca de idioma, por exemplo), em vez de sempre voltar
+-- pra Ramp.
+local lastSelectedTabKey = "ramp"
+local lastFramePosition = UDim2.new(0, 16, 0, 16)
 
 local existingGui = playerGui:FindFirstChild("MegaRampHub")
 if existingGui then
@@ -51,6 +193,8 @@ local equipBestInventoryRemote = findRemote("EquipBestInventory")
 local eventShopUpdateRemote = findRemote("EventShopUpdate")
 local eventShopActionRemote = findRemote("EventShopAction")
 local selectInventoryItemRemote = findRemote("SelectInventoryItem")
+local inventoryUpdateRemote = findRemote("InventoryUpdate")
+local giftActionRemote = findRemote("GiftAction")
 local miniGameMemoryEvent = findRemote("MiniGame1MemoryEvent")
 local miniGameButton = Workspace:WaitForChild("MiniGame1Button")
 local leaderboardUpdateRemote = findRemote("LeaderboardUpdate")
@@ -66,6 +210,61 @@ if leaderboardUpdateRemote then
         latestLeaderboardData = list
         if refreshLeaderboardUI then refreshLeaderboardUI() end
     end)
+end
+
+-- ========================================
+-- INVENTÁRIO: o próprio jogo já manda a lista completa de slimes (com
+-- índice = posição no InventoryUpdate) e o índice do que está "na mão"
+-- (equipado) toda vez que muda -- SelectInventoryItem:FireServer(index) é
+-- exatamente o que o botão de cada card do inventário do jogo dispara
+-- quando você clica nele, então dá pra equipar QUALQUER slime da lista
+-- direto por esse remote, sem precisar abrir o inventário e clicar.
+-- ========================================
+
+local latestInventoryList = nil
+local latestEquippedIndex = nil
+local refreshInventoryUI -- atribuída lá na aba SLIMES, mais abaixo
+
+if inventoryUpdateRemote then
+    inventoryUpdateRemote.OnClientEvent:Connect(function(list, equippedIndex)
+        latestInventoryList = list
+        latestEquippedIndex = equippedIndex
+        if refreshInventoryUI then refreshInventoryUI() end
+    end)
+end
+
+local function equipSlimeByIndex(index)
+    if not selectInventoryItemRemote then
+        addLog("[SLIMES] [!] SelectInventoryItem não encontrado")
+        return
+    end
+    pcall(function() selectInventoryItemRemote:FireServer(index) end)
+    addLog("[SLIMES] Pedido pra equipar índice " .. tostring(index))
+end
+
+local function findPlayerByNameFragment(text)
+    if not text or text == "" then return nil end
+    local lower = text:lower()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower() == lower then return plr end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower():find(lower, 1, true) then return plr end
+    end
+    return nil
+end
+
+local function sendGiftByIndex(targetPlayer, index)
+    if not giftActionRemote then
+        addLog("[GIFT] [!] GiftAction não encontrado")
+        return
+    end
+    if not targetPlayer then
+        addLog("[GIFT] [!] Escolha um jogador de destino")
+        return
+    end
+    pcall(function() giftActionRemote:FireServer("RequestGift", targetPlayer, index) end)
+    addLog("[GIFT] Pedido de gift enviado: índice " .. tostring(index) .. " -> " .. targetPlayer.Name)
 end
 
 -- ========================================
@@ -617,7 +816,7 @@ local function makeAutoPauseGuards(cfg, getStatusLabel, startFn, stopFn, label)
             stopFn()
             local statusLabel = getStatusLabel()
             if statusLabel then
-                statusLabel.Text = "Status: PAUSADO (outro jogador)"
+                statusLabel.Text = t("status_paused_other")
                 statusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
             end
         end
@@ -637,7 +836,7 @@ local function makeAutoPauseGuards(cfg, getStatusLabel, startFn, stopFn, label)
             autoResumeWhenAlone = true
             local statusLabel = getStatusLabel()
             if statusLabel then
-                statusLabel.Text = "Status: PAUSADO (outro jogador)"
+                statusLabel.Text = t("status_paused_other")
                 statusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
             end
             return
@@ -849,7 +1048,7 @@ local function forceTeleportToJumpCar()
 
     if success then
         teleportCount = teleportCount + 1
-        if rampCountLabel then rampCountLabel.Text = "Teleportes forçados: " .. teleportCount end
+        if rampCountLabel then rampCountLabel.Text = t("label_teleports_forced") .. teleportCount end
         return true
     else
         addLog("[RAMP] [!] Erro ao teleportar: " .. tostring(err))
@@ -890,7 +1089,7 @@ local function startMasterCycle()
     if rampConfig.running then return end
     rampConfig.running = true
     if rampStatusLabel then
-        rampStatusLabel.Text = "Status: ATIVANDO EVENTO..."
+        rampStatusLabel.Text = t("status_activating_event")
         rampStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[RAMP] === CICLO AUTOMÁTICO INICIADO ===")
@@ -901,31 +1100,31 @@ local function startMasterCycle()
 
             if remaining then
                 addLog("[RAMP] [*] Evento já ativo, restam ~" .. remaining .. "s. Retomando sem reativar.")
-                if rampStatusLabel then rampStatusLabel.Text = "Status: TELEPORTANDO (evento ativo)" end
+                if rampStatusLabel then rampStatusLabel.Text = t("status_teleporting") end
                 runTeleportLoopForDuration(remaining + EVENT_DURATION_BUFFER_SECONDS)
             else
-                if rampStatusLabel then rampStatusLabel.Text = "Status: ATIVANDO EVENTO..." end
+                if rampStatusLabel then rampStatusLabel.Text = t("status_activating_event") end
                 activateMostExpensiveEvent()
                 if not rampConfig.running then break end
 
-                if rampStatusLabel then rampStatusLabel.Text = "Status: TELEPORTANDO (evento ativo)" end
+                if rampStatusLabel then rampStatusLabel.Text = t("status_teleporting") end
                 runTeleportLoopForDuration(EVENT_DURATION_SECONDS + EVENT_DURATION_BUFFER_SECONDS)
             end
             if not rampConfig.running then break end
 
-            if rampStatusLabel then rampStatusLabel.Text = "Status: VENDENDO SLIMES..." end
+            if rampStatusLabel then rampStatusLabel.Text = t("status_selling") end
             addLog("[RAMP] [*] Tempo do evento acabou, vendendo todos os slimes...")
             autoSellAllSlimesBlocking()
 
             cycleCount = cycleCount + 1
-            if rampCycleLabel then rampCycleLabel.Text = "Ciclos completos: " .. cycleCount end
+            if rampCycleLabel then rampCycleLabel.Text = t("label_cycles_complete") .. cycleCount end
 
             if not rampConfig.running then break end
             task.wait(1)
         end
 
         if rampStatusLabel then
-            rampStatusLabel.Text = "Status: PARADO"
+            rampStatusLabel.Text = t("status_stopped")
             rampStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
         end
         addLog("[RAMP] === CICLO AUTOMÁTICO FINALIZADO ===")
@@ -1155,14 +1354,14 @@ local function runOneMemoryRound()
     end
 
     memoryRoundCount = memoryRoundCount + 1
-    if memoryCountLabel then memoryCountLabel.Text = "Rodadas: " .. memoryRoundCount end
+    if memoryCountLabel then memoryCountLabel.Text = t("label_rounds") .. memoryRoundCount end
 end
 
 local function startMemoryLoop()
     if memoryConfig.running then return end
     memoryConfig.running = true
     if memoryStatusLabel then
-        memoryStatusLabel.Text = "Status: RODANDO"
+        memoryStatusLabel.Text = t("status_running")
         memoryStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[MEMORIA] === INICIADO ===")
@@ -1175,7 +1374,7 @@ local function startMemoryLoop()
             task.wait(cooldown)
         end
         if memoryStatusLabel then
-            memoryStatusLabel.Text = "Status: PARADO"
+            memoryStatusLabel.Text = t("status_stopped")
             memoryStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
         end
         addLog("[MEMORIA] === FINALIZADO ===")
@@ -1185,7 +1384,7 @@ end
 local function stopMemoryLoop()
     memoryConfig.running = false
     if memoryStatusLabel then
-        memoryStatusLabel.Text = "Status: PARADO"
+        memoryStatusLabel.Text = t("status_stopped")
         memoryStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
     end
     addLog("[MEMORIA] Parando...")
@@ -1248,14 +1447,14 @@ local function runHitSlimeAttempt()
     end
 
     hitSlimeRoundCount = hitSlimeRoundCount + 1
-    if hitSlimeCountLabel then hitSlimeCountLabel.Text = "Rodadas: " .. hitSlimeRoundCount end
+    if hitSlimeCountLabel then hitSlimeCountLabel.Text = t("label_rounds") .. hitSlimeRoundCount end
 end
 
 local function startHitSlimeLoop()
     if hitSlimeConfig.running then return end
     hitSlimeConfig.running = true
     if hitSlimeStatusLabel then
-        hitSlimeStatusLabel.Text = "Status: RODANDO"
+        hitSlimeStatusLabel.Text = t("status_running")
         hitSlimeStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[HITSLIME] === INICIADO === (" .. hitSlimeConfig.secondsPerRound .. "s por nível)")
@@ -1268,7 +1467,7 @@ local function startHitSlimeLoop()
             task.wait(cooldown)
         end
         if hitSlimeStatusLabel then
-            hitSlimeStatusLabel.Text = "Status: PARADO"
+            hitSlimeStatusLabel.Text = t("status_stopped")
             hitSlimeStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
         end
         addLog("[HITSLIME] === FINALIZADO ===")
@@ -1286,7 +1485,7 @@ end
 local function stopHitSlimeLoop()
     hitSlimeConfig.running = false
     if hitSlimeStatusLabel then
-        hitSlimeStatusLabel.Text = "Status: PARADO"
+        hitSlimeStatusLabel.Text = t("status_stopped")
         hitSlimeStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
     end
     addLog("[HITSLIME] Parando...")
@@ -1371,7 +1570,7 @@ enableFreecam = function()
     camera.CameraType = Enum.CameraType.Scriptable
     freecamConfig.active = true
     if freecamStatusLabel then
-        freecamStatusLabel.Text = "Status: ATIVO (F5 pra sair)"
+        freecamStatusLabel.Text = t("status_freecam_active")
         freecamStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[CAM] Freecam ativado")
@@ -1440,7 +1639,7 @@ disableFreecam = function()
     freecamAnchoredHrp = nil
 
     if freecamStatusLabel then
-        freecamStatusLabel.Text = "Status: DESATIVADO"
+        freecamStatusLabel.Text = t("status_inactive")
         freecamStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
     end
     addLog("[CAM] Freecam desativado")
@@ -1467,7 +1666,7 @@ startSpectate = function(player)
 
     spectatingPlayer = player
     if playersStatusLabel then
-        playersStatusLabel.Text = "Status: ASSISTINDO " .. player.Name
+        playersStatusLabel.Text = t("status_watching") .. player.Name
         playersStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[PLAYERS] Espectando " .. player.Name)
@@ -1483,7 +1682,7 @@ stopSpectate = function()
     camera.CameraSubject = myChar and myChar:FindFirstChildOfClass("Humanoid")
 
     if playersStatusLabel then
-        playersStatusLabel.Text = "Status: NENHUM (câmera normal)"
+        playersStatusLabel.Text = t("status_none_normal_cam")
         playersStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
     end
     addLog("[PLAYERS] Spectate desativado")
@@ -1618,7 +1817,7 @@ local function enableEsp()
     espHeartbeatConn = RunService.Heartbeat:Connect(espHeartbeatStep)
 
     if espStatusLabel then
-        espStatusLabel.Text = "Status: ATIVO"
+        espStatusLabel.Text = t("status_active")
         espStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
     addLog("[ESP] Ativado")
@@ -1641,7 +1840,7 @@ local function disableEsp()
     end
 
     if espStatusLabel then
-        espStatusLabel.Text = "Status: DESATIVADO"
+        espStatusLabel.Text = t("status_inactive")
         espStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
     end
     addLog("[ESP] Desativado")
@@ -1684,7 +1883,7 @@ end)
 RunService.Heartbeat:Connect(function(dt)
     if not carBoostConfig.enabled then
         if carStatusLabel then
-            carStatusLabel.Text = "Status: DESLIGADO"
+            carStatusLabel.Text = t("status_off")
             carStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
         end
         return
@@ -1692,7 +1891,7 @@ RunService.Heartbeat:Connect(function(dt)
 
     if not carBoostConfig.holding then
         if carStatusLabel then
-            carStatusLabel.Text = "Status: LIGADO (segure SHIFT)"
+            carStatusLabel.Text = t("status_on_hold_shift")
             carStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
         end
         return
@@ -1701,7 +1900,7 @@ RunService.Heartbeat:Connect(function(dt)
     local carPart = getCarMainPart(findPlayerCarModel())
     if not carPart then
         if carStatusLabel then
-            carStatusLabel.Text = "Status: LIGADO (carro não encontrado)"
+            carStatusLabel.Text = t("status_on_no_car")
             carStatusLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
         end
         return
@@ -1711,8 +1910,310 @@ RunService.Heartbeat:Connect(function(dt)
     carPart.AssemblyLinearVelocity = carPart.AssemblyLinearVelocity + forward * carBoostConfig.force * dt
 
     if carStatusLabel then
-        carStatusLabel.Text = "Status: IMPULSIONANDO"
+        carStatusLabel.Text = t("status_boosting")
         carStatusLabel.TextColor3 = Color3.fromRGB(0, 220, 220)
+    end
+end)
+
+-- ========================================
+-- PROPS LOCAIS: spawnar/clonar/grudar/segurar objetos onde você olha --
+-- 100% client-side (LocalScript não tem canal de rede pra replicar
+-- Instance criada por ele pra outros clients nem pro servidor), então só
+-- APARECE NA SUA TELA. Bom pra brincar sozinho, gravar clipe, testar
+-- cena -- não é visível pros outros jogadores.
+-- ========================================
+
+-- Tudo isso vai dentro de uma função própria só pra economizar registros
+-- de variável local do chunk principal (mesmo motivo do setupMenu() lá
+-- embaixo) -- só o necessário sai pra fora, dentro da tabela Props.
+local function buildPropsFeature()
+    local propsFolder = Instance.new("Folder")
+    propsFolder.Name = "HubLocalProps"
+    propsFolder.Parent = Workspace
+
+    local config = { spawnDistance = 50, selected = nil, carrying = false, holdDistance = 8 }
+    local statusLabel = nil
+    local propHighlight = nil
+
+    local function castLookRay(maxDistance, extraIgnore)
+        local camera = Workspace.CurrentCamera
+        local origin = camera.CFrame.Position
+        local direction = camera.CFrame.LookVector * (maxDistance or 500)
+
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local ignore = {}
+        if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
+        if extraIgnore then
+            for _, obj in ipairs(extraIgnore) do table.insert(ignore, obj) end
+        end
+        params.FilterDescendantsInstances = ignore
+
+        return Workspace:Raycast(origin, direction, params)
+    end
+
+    -- Flecha/mira fixa no centro da tela, pra saber exatamente o que vai
+    -- ser clonado/grudado/movido antes de clicar -- também 100% local.
+    local crosshairGui = Instance.new("ScreenGui")
+    crosshairGui.Name = "HubCrosshair"
+    crosshairGui.ResetOnSpawn = false
+    crosshairGui.DisplayOrder = 998
+    crosshairGui.IgnoreGuiInset = true
+    crosshairGui.Parent = playerGui
+
+    local crosshairLabel = Instance.new("TextLabel")
+    crosshairLabel.Name = "Arrow"
+    crosshairLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+    crosshairLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    crosshairLabel.Size = UDim2.new(0, 24, 0, 24)
+    crosshairLabel.BackgroundTransparency = 1
+    crosshairLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
+    crosshairLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    crosshairLabel.TextStrokeTransparency = 0
+    crosshairLabel.TextScaled = true
+    crosshairLabel.Font = Enum.Font.GothamBold
+    crosshairLabel.Text = "▼"
+    crosshairLabel.Parent = crosshairGui
+
+    local function getSelectedPrimaryPart()
+        local selected = config.selected
+        if not selected or not selected.Parent then return nil end
+        if selected:IsA("Model") then
+            return selected.PrimaryPart or selected:FindFirstChildWhichIsA("BasePart", true)
+        elseif selected:IsA("BasePart") then
+            return selected
+        end
+        return nil
+    end
+
+    local function selectProp(instance)
+        if propHighlight then
+            propHighlight:Destroy()
+            propHighlight = nil
+        end
+        config.selected = instance
+        config.carrying = false
+
+        if instance then
+            local hl = Instance.new("Highlight")
+            hl.Name = "HubPropHighlight"
+            hl.FillColor = Color3.fromRGB(0, 200, 255)
+            hl.FillTransparency = 0.6
+            hl.OutlineColor = Color3.fromRGB(0, 200, 255)
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Parent = instance
+            propHighlight = hl
+
+            if statusLabel then
+                statusLabel.Text = t("label_selected") .. instance.Name
+                statusLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+            end
+        elseif statusLabel then
+            statusLabel.Text = t("label_none_selected")
+            statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+        end
+    end
+
+    local function cloneLookedAt()
+        local hit = castLookRay(config.spawnDistance, { propsFolder })
+        if not hit or not hit.Instance then
+            addLog("[PROPS] [!] Nada na mira pra clonar")
+            return
+        end
+
+        local target = hit.Instance
+        local model = target:FindFirstAncestorOfClass("Model")
+        local sourceToClone = model or target
+
+        local ok, clone = pcall(function() return sourceToClone:Clone() end)
+        if not ok or not clone then
+            addLog("[PROPS] [!] Não consegui clonar esse objeto")
+            return
+        end
+
+        if clone:IsA("Model") then
+            for _, d in ipairs(clone:GetDescendants()) do
+                if d:IsA("BasePart") then d.Anchored = true d.CanCollide = false end
+            end
+            local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
+            if primary then
+                clone:PivotTo(CFrame.new(hit.Position))
+            end
+            clone.Parent = propsFolder
+            selectProp(primary or clone)
+        elseif clone:IsA("BasePart") then
+            clone.Anchored = true
+            clone.CanCollide = false
+            clone.Position = hit.Position
+            clone.Parent = propsFolder
+            selectProp(clone)
+        else
+            clone:Destroy()
+            addLog("[PROPS] [!] Objeto não clonável (não é Part/Model)")
+            return
+        end
+
+        addLog("[PROPS] Clonado: " .. target.Name)
+    end
+
+    local function attachSelectedToLookTarget()
+        local primary = getSelectedPrimaryPart()
+        if not primary then
+            addLog("[PROPS] [!] Nenhum objeto selecionado")
+            return
+        end
+        local hit = castLookRay(config.spawnDistance, { propsFolder })
+        if not hit or not hit.Instance then
+            addLog("[PROPS] [!] Nada na mira pra grudar")
+            return
+        end
+        local targetPart = hit.Instance:IsA("BasePart") and hit.Instance or hit.Instance:FindFirstAncestorWhichIsA("BasePart")
+        if not targetPart then
+            addLog("[PROPS] [!] Não achei uma parte sólida na mira")
+            return
+        end
+
+        local existing = primary:FindFirstChild("HubPropWeld")
+        if existing then existing:Destroy() end
+
+        primary.Position = hit.Position
+        primary.Anchored = false
+
+        local weld = Instance.new("WeldConstraint")
+        weld.Name = "HubPropWeld"
+        weld.Part0 = primary
+        weld.Part1 = targetPart
+        weld.Parent = primary
+
+        addLog("[PROPS] Grudado em " .. targetPart.Name)
+    end
+
+    local function detachSelected()
+        local primary = getSelectedPrimaryPart()
+        if not primary then return end
+        local existing = primary:FindFirstChild("HubPropWeld")
+        if existing then existing:Destroy() end
+        addLog("[PROPS] Solto")
+    end
+
+    local function toggleAnchorSelected()
+        local primary = getSelectedPrimaryPart()
+        if not primary then
+            addLog("[PROPS] [!] Nenhum objeto selecionado")
+            return
+        end
+        primary.Anchored = not primary.Anchored
+        addLog("[PROPS] " .. (primary.Anchored and "Ancorado" or "Solto (física ligada)"))
+    end
+
+    local function scaleSelected(multiplier)
+        local primary = getSelectedPrimaryPart()
+        if not primary then
+            addLog("[PROPS] [!] Nenhum objeto selecionado")
+            return
+        end
+        primary.Size = primary.Size * multiplier
+    end
+
+    local function deleteSelected()
+        local selected = config.selected
+        if not selected then
+            addLog("[PROPS] [!] Nenhum objeto selecionado")
+            return
+        end
+        selectProp(nil)
+        selected:Destroy()
+        addLog("[PROPS] Deletado")
+    end
+
+    local function clearAllProps()
+        selectProp(nil)
+        propsFolder:ClearAllChildren()
+        addLog("[PROPS] Tudo limpo")
+    end
+
+    local selectModeEnabled = false
+
+    local function toggleSelectMode()
+        selectModeEnabled = not selectModeEnabled
+        addLog("[PROPS] Modo seleção " .. (selectModeEnabled and "ATIVADO (clique num objeto clonado)" or "DESATIVADO"))
+        return selectModeEnabled
+    end
+
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if not selectModeEnabled then return end
+
+        local hit = castLookRay(config.spawnDistance * 3)
+        if hit and hit.Instance and hit.Instance:IsDescendantOf(propsFolder) then
+            selectProp(hit.Instance)
+        end
+    end)
+
+    local function toggleCarry()
+        if not config.selected then
+            addLog("[PROPS] [!] Nenhum objeto selecionado")
+            return
+        end
+        config.carrying = not config.carrying
+        addLog("[PROPS] Segurando: " .. tostring(config.carrying))
+    end
+
+    RunService.Heartbeat:Connect(function()
+        if not config.carrying then return end
+        local primary = getSelectedPrimaryPart()
+        if not primary then
+            config.carrying = false
+            return
+        end
+        primary.Anchored = true
+        local camera = Workspace.CurrentCamera
+        local holdCFrame = camera.CFrame * CFrame.new(0, 0, -config.holdDistance)
+        local selected = config.selected
+        if selected:IsA("Model") then
+            selected:PivotTo(holdCFrame)
+        else
+            primary.CFrame = holdCFrame
+        end
+    end)
+
+    return {
+        config = config,
+        crosshairLabel = crosshairLabel,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+        clone = cloneLookedAt,
+        attach = attachSelectedToLookTarget,
+        detach = detachSelected,
+        toggleAnchor = toggleAnchorSelected,
+        scale = scaleSelected,
+        delete = deleteSelected,
+        clearAll = clearAllProps,
+        toggleSelectMode = toggleSelectMode,
+        toggleCarry = toggleCarry,
+    }
+end
+
+local Props = buildPropsFeature()
+
+-- ========================================
+-- HORÁRIO (DIA/NOITE): Lighting.ClockTime replica DO SERVIDOR pro client
+-- normalmente, mas o client pode sobrescrever localmente -- também só
+-- aparece pra você. Se o jogo tiver um ciclo dia/noite rodando no
+-- servidor, ele vai ficar tentando voltar o valor, então reaplicamos
+-- sozinhos toda vez que ele mudar (enquanto ATIVADO).
+-- ========================================
+
+local timeOfDayConfig = { enabled = false, clockTime = 14 }
+
+local function applyTimeOfDay()
+    if not timeOfDayConfig.enabled then return end
+    Lighting.ClockTime = timeOfDayConfig.clockTime
+end
+
+Lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+    if timeOfDayConfig.enabled and math.abs(Lighting.ClockTime - timeOfDayConfig.clockTime) > 0.05 then
+        applyTimeOfDay()
     end
 end)
 
@@ -1885,6 +2386,11 @@ local function setupMenu()
 
 local hubCamera = Workspace.CurrentCamera
 
+-- Reconstrói do zero (troca de idioma chama setupMenu() de novo) --
+-- destrói a instância anterior antes de criar a nova.
+local oldGui = playerGui:FindFirstChild("MegaRampHub")
+if oldGui then oldGui:Destroy() end
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MegaRampHub"
 screenGui.ResetOnSpawn = false
@@ -1893,29 +2399,38 @@ screenGui.IgnoreGuiInset = true
 screenGui.Parent = playerGui
 
 local TITLE_HEIGHT = 34
-local TABBAR_HEIGHT = 32
+local SIDEBAR_WIDTH = 128
 
 local frame = Instance.new("Frame")
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-frame.BorderSizePixel = 2
-frame.BorderColor3 = Color3.fromRGB(0, 150, 255)
-frame.Position = UDim2.new(0, 16, 0, 16)
+frame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+frame.BorderSizePixel = 0
+frame.Position = lastFramePosition
 frame.Draggable = true
 frame.Active = true
 frame.ClipsDescendants = true
 frame.Parent = screenGui
 
+frame:GetPropertyChangedSignal("Position"):Connect(function()
+    lastFramePosition = frame.Position
+end)
+
+local outline = Instance.new("UIStroke")
+outline.Color = Color3.fromRGB(70, 120, 200)
+outline.Thickness = 1
+outline.Transparency = 0.3
+outline.Parent = frame
+
 local titleBar = Instance.new("Frame")
 titleBar.Size = UDim2.new(1, 0, 0, TITLE_HEIGHT)
-titleBar.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+titleBar.BackgroundColor3 = Color3.fromRGB(32, 34, 44)
 titleBar.BorderSizePixel = 0
 titleBar.Parent = frame
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -40, 1, 0)
-title.Position = UDim2.new(0, 8, 0, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
 title.BackgroundTransparency = 1
-title.TextColor3 = Color3.new(1, 1, 1)
+title.TextColor3 = Color3.fromRGB(120, 190, 255)
 title.TextSize = 13
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -1938,27 +2453,38 @@ body.Size = UDim2.new(1, 0, 1, -TITLE_HEIGHT)
 body.BackgroundTransparency = 1
 body.Parent = frame
 
-local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, 0, 0, TABBAR_HEIGHT)
-tabBar.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+local tabBar = Instance.new("ScrollingFrame")
+tabBar.Size = UDim2.new(0, SIDEBAR_WIDTH, 1, 0)
+tabBar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
 tabBar.BorderSizePixel = 0
+tabBar.ScrollBarThickness = 3
+tabBar.CanvasSize = UDim2.new(0, 0, 0, 0)
+tabBar.AutomaticCanvasSize = Enum.AutomaticSize.Y
 tabBar.Parent = body
 
+local tabBarLayout = Instance.new("UIListLayout")
+tabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabBarLayout.Padding = UDim.new(0, 2)
+tabBarLayout.Parent = tabBar
+
 local contentArea = Instance.new("Frame")
-contentArea.Position = UDim2.new(0, 0, 0, TABBAR_HEIGHT)
-contentArea.Size = UDim2.new(1, 0, 1, -TABBAR_HEIGHT)
+contentArea.Position = UDim2.new(0, SIDEBAR_WIDTH, 0, 0)
+contentArea.Size = UDim2.new(1, -SIDEBAR_WIDTH, 1, 0)
 contentArea.BackgroundTransparency = 1
 contentArea.Parent = body
 
 local TAB_DEFS = {
-    { key = "ramp", icon = "🎡" },
-    { key = "games", icon = "🎮" },
-    { key = "cam", icon = "📷" },
-    { key = "car", icon = "🚗" },
-    { key = "esp", icon = "🎯" },
-    { key = "anim", icon = "🕺" },
-    { key = "webhook", icon = "🔔" },
-    { key = "players", icon = "👥" },
+    { key = "ramp", labelKey = "tab_ramp" },
+    { key = "games", labelKey = "tab_games" },
+    { key = "cam", labelKey = "tab_cam" },
+    { key = "car", labelKey = "tab_car" },
+    { key = "props", labelKey = "tab_props" },
+    { key = "esp", labelKey = "tab_esp" },
+    { key = "anim", labelKey = "tab_anim" },
+    { key = "webhook", labelKey = "tab_webhook" },
+    { key = "players", labelKey = "tab_players" },
+    { key = "slimes", labelKey = "tab_slimes" },
+    { key = "settings", labelKey = "tab_settings" },
 }
 
 local tabButtons = {}
@@ -1977,10 +2503,10 @@ local function makeTabScroll(key)
     scroll.Parent = contentArea
 
     local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 8)
-    padding.PaddingRight = UDim.new(0, 8)
-    padding.PaddingTop = UDim.new(0, 8)
-    padding.PaddingBottom = UDim.new(0, 8)
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingRight = UDim.new(0, 10)
+    padding.PaddingTop = UDim.new(0, 10)
+    padding.PaddingBottom = UDim.new(0, 10)
     padding.Parent = scroll
 
     local layout = Instance.new("UIListLayout")
@@ -1996,26 +2522,43 @@ for _, def in ipairs(TAB_DEFS) do
 end
 
 local function selectTab(key)
+    lastSelectedTabKey = key
     for k, f in pairs(tabFrames) do
         f.Visible = (k == key)
     end
     for k, b in pairs(tabButtons) do
-        b.BackgroundColor3 = (k == key) and Color3.fromRGB(55, 55, 55) or Color3.fromRGB(24, 24, 24)
+        local selected = (k == key)
+        b.BackgroundColor3 = selected and Color3.fromRGB(40, 46, 60) or Color3.fromRGB(20, 20, 24)
+        b.TextColor3 = selected and Color3.fromRGB(120, 190, 255) or Color3.fromRGB(190, 190, 190)
+        local accent = b:FindFirstChild("Accent")
+        if accent then accent.BackgroundTransparency = selected and 0 or 1 end
     end
 end
 
-local tabW = 1 / #TAB_DEFS
 for i, def in ipairs(TAB_DEFS) do
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(tabW, 0, 1, 0)
-    btn.Position = UDim2.new(tabW * (i - 1), 0, 0, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
     btn.BorderSizePixel = 0
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.TextSize = 16
+    btn.TextColor3 = Color3.fromRGB(190, 190, 190)
+    btn.TextSize = 12
     btn.Font = Enum.Font.GothamBold
-    btn.Text = def.icon
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.Text = t(def.labelKey)
+    btn.LayoutOrder = i
     btn.Parent = tabBar
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 14)
+    padding.Parent = btn
+
+    local accent = Instance.new("Frame")
+    accent.Name = "Accent"
+    accent.Size = UDim2.new(0, 3, 1, 0)
+    accent.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+    accent.BackgroundTransparency = 1
+    accent.BorderSizePixel = 0
+    accent.Parent = btn
 
     btn.MouseButton1Click:Connect(function() selectTab(def.key) end)
     tabButtons[def.key] = btn
@@ -2163,14 +2706,13 @@ local function addToggleRow(tab, labelText, initialEnabled)
     btn.TextColor3 = Color3.new(1, 1, 1)
     btn.TextSize = 11
     btn.Font = Enum.Font.GothamBold
-    btn.Text = (initialEnabled and "✓ " or "✗ ") .. labelText
+    btn.Text = labelText
     btn.LayoutOrder = tabOrder(tab)
     btn.Parent = tab
 
     btn.MouseButton1Click:Connect(function()
         state.enabled = not state.enabled
         btn.BackgroundColor3 = state.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
-        btn.Text = (state.enabled and "✓ " or "✗ ") .. labelText
     end)
 
     return state
@@ -2179,12 +2721,12 @@ end
 -- --- ABA RAMP ---
 
 local rampTab = tabFrames.ramp
-addSectionLabel(rampTab, "CICLO EVENTO MAIS CARO", Color3.fromRGB(255, 140, 60))
-local rampStartBtn, rampStopBtn = addTwoButtons(rampTab, "▶ INICIAR", Color3.fromRGB(0, 150, 0), "■ PARAR", Color3.fromRGB(150, 0, 0))
-local toggleAlertBtn = addButton(rampTab, "🔔 ALERTA: LIMITED RAINBOW", Color3.fromRGB(150, 100, 0), 30)
-local sellAllBtn = addButton(rampTab, "💰 VENDER TODOS OS SLIMES (manual)", Color3.fromRGB(0, 150, 100), 34)
+addSectionLabel(rampTab, t("sec_ramp_cycle"), Color3.fromRGB(255, 140, 60))
+local rampStartBtn, rampStopBtn = addTwoButtons(rampTab, t("start"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+local toggleAlertBtn = addButton(rampTab, t("btn_alert_rainbow"), Color3.fromRGB(150, 100, 0), 30)
+local sellAllBtn = addButton(rampTab, t("btn_sell_all"), Color3.fromRGB(0, 150, 100), 34)
 
-addSectionLabel(rampTab, "Checkpoint (X, Y, Z):", Color3.fromRGB(200, 200, 200))
+addSectionLabel(rampTab, t("lbl_checkpoint"), Color3.fromRGB(200, 200, 200))
 local checkpointContainer = Instance.new("Frame")
 checkpointContainer.Size = UDim2.new(1, 0, 0, 30)
 checkpointContainer.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -2238,9 +2780,9 @@ do
     end)
 end
 
-rampStatusLabel = addFullLabel(rampTab, "Status: PARADO", Color3.fromRGB(100, 200, 100))
-rampCountLabel = addFullLabel(rampTab, "Teleportes forçados: 0", Color3.fromRGB(200, 200, 255))
-rampCycleLabel = addFullLabel(rampTab, "Ciclos completos: 0", Color3.fromRGB(255, 200, 100))
+rampStatusLabel = addFullLabel(rampTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+rampCountLabel = addFullLabel(rampTab, t("label_teleports_forced") .. "0", Color3.fromRGB(200, 200, 255))
+rampCycleLabel = addFullLabel(rampTab, t("label_cycles_complete") .. "0", Color3.fromRGB(255, 200, 100))
 
 local autoPauseToggleBtn = Instance.new("TextButton")
 autoPauseToggleBtn.Size = UDim2.new(1, 0, 0, 26)
@@ -2248,13 +2790,12 @@ autoPauseToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
 autoPauseToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 autoPauseToggleBtn.TextSize = 11
 autoPauseToggleBtn.Font = Enum.Font.GothamBold
-autoPauseToggleBtn.Text = "✓ PAUSAR SOZINHO SE OUTRO JOGADOR ENTRAR (Ramp/Memória/Bata o Slime)"
+autoPauseToggleBtn.Text = t("btn_auto_pause")
 autoPauseToggleBtn.LayoutOrder = tabOrder(rampTab)
 autoPauseToggleBtn.Parent = rampTab
 autoPauseToggleBtn.MouseButton1Click:Connect(function()
     autoPauseConfig.enabled = not autoPauseConfig.enabled
     autoPauseToggleBtn.BackgroundColor3 = autoPauseConfig.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
-    autoPauseToggleBtn.Text = (autoPauseConfig.enabled and "✓ " or "✗ ") .. "PAUSAR SOZINHO SE OUTRO JOGADOR ENTRAR (Ramp/Memória/Bata o Slime)"
 end)
 
 addInfoLabel(rampTab, "Ativa o evento mais caro, teleporta no JumpCar até acabar, vende tudo e repete sozinho até PARAR. Com a pausa automática LIGADA, os 3 loops (Ramp/Memória/Bata o Slime) pausam sozinhos se outro jogador entrar na sala e retomam quando ficar sozinho de novo. Desligada, eles ignoram outros jogadores e continuam rodando direto.")
@@ -2264,10 +2805,10 @@ rampStopBtn.MouseButton1Click:Connect(rampGuardedStop)
 toggleAlertBtn.MouseButton1Click:Connect(function()
     if alertKeywords[1] == "limitedrainbow" then
         alertKeywords = { "limited" }
-        toggleAlertBtn.Text = "🔔 ALERTA: TODOS OS LIMITED"
+        toggleAlertBtn.Text = t("btn_alert_all_limited")
     else
         alertKeywords = { "limitedrainbow" }
-        toggleAlertBtn.Text = "🔔 ALERTA: LIMITED RAINBOW"
+        toggleAlertBtn.Text = t("btn_alert_rainbow")
     end
 end)
 sellAllBtn.MouseButton1Click:Connect(function() autoSellAllSlimes() end)
@@ -2275,15 +2816,15 @@ sellAllBtn.MouseButton1Click:Connect(function() autoSellAllSlimes() end)
 -- --- ABA GAMES ---
 
 local gamesTab = tabFrames.games
-addSectionLabel(gamesTab, "MEMÓRIA DE SLIME", Color3.fromRGB(0, 190, 100))
-local memoryStartBtnUi, memoryStopBtnUi = addTwoButtons(gamesTab, "▶ JOGAR", Color3.fromRGB(0, 150, 0), "■ PARAR", Color3.fromRGB(150, 0, 0))
-memoryStatusLabel = addFullLabel(gamesTab, "Status: PARADO", Color3.fromRGB(100, 200, 100))
-memoryCountLabel = addFullLabel(gamesTab, "Rodadas: 0", Color3.fromRGB(200, 200, 255))
+addSectionLabel(gamesTab, t("sec_memory"), Color3.fromRGB(0, 190, 100))
+local memoryStartBtnUi, memoryStopBtnUi = addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+memoryStatusLabel = addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+memoryCountLabel = addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
 
 addDivider(gamesTab)
 
-addSectionLabel(gamesTab, "BATA O SLIME", Color3.fromRGB(0, 185, 235))
-local secondsInput = addTextField(gamesTab, "Segundos por rodada (nível):", hitSlimeConfig.secondsPerRound)
+addSectionLabel(gamesTab, t("sec_hitslime"), Color3.fromRGB(0, 185, 235))
+local secondsInput = addTextField(gamesTab, t("lbl_seconds_per_round"), hitSlimeConfig.secondsPerRound)
 secondsInput.FocusLost:Connect(function()
     local val = tonumber(secondsInput.Text)
     if val and val >= 0 then
@@ -2292,9 +2833,9 @@ secondsInput.FocusLost:Connect(function()
         secondsInput.Text = tostring(hitSlimeConfig.secondsPerRound)
     end
 end)
-local hitSlimeStartBtnUi, hitSlimeStopBtnUi = addTwoButtons(gamesTab, "▶ JOGAR", Color3.fromRGB(0, 150, 0), "■ PARAR", Color3.fromRGB(150, 0, 0))
-hitSlimeStatusLabel = addFullLabel(gamesTab, "Status: PARADO", Color3.fromRGB(100, 200, 100))
-hitSlimeCountLabel = addFullLabel(gamesTab, "Rodadas: 0", Color3.fromRGB(200, 200, 255))
+local hitSlimeStartBtnUi, hitSlimeStopBtnUi = addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+hitSlimeStatusLabel = addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+hitSlimeCountLabel = addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
 
 addInfoLabel(gamesTab, "Memória joga de verdade. Bata o Slime é atalho por remote (~180s totais pra não cair no \"Too fast\"). Só existe UMA rodada ativa por vez no servidor. Os dois repetem sozinhos até PARAR e pausam se outro jogador entrar.")
 
@@ -2306,8 +2847,8 @@ hitSlimeStopBtnUi.MouseButton1Click:Connect(hitSlimeGuardedStop)
 -- --- ABA CAM ---
 
 local camTab = tabFrames.cam
-addSectionLabel(camTab, "FREE CAM", Color3.fromRGB(0, 150, 255))
-local speedInput = addTextField(camTab, "Velocidade base (studs/s):", freecamConfig.baseSpeed)
+addSectionLabel(camTab, t("sec_freecam"), Color3.fromRGB(0, 150, 255))
+local speedInput = addTextField(camTab, t("lbl_freecam_speed"), freecamConfig.baseSpeed)
 speedInput.FocusLost:Connect(function()
     local val = tonumber(speedInput.Text)
     if val and val > 0 then
@@ -2316,8 +2857,8 @@ speedInput.FocusLost:Connect(function()
         speedInput.Text = tostring(freecamConfig.baseSpeed)
     end
 end)
-local camEnableBtn, camDisableBtn = addTwoButtons(camTab, "▶ ATIVAR", Color3.fromRGB(0, 150, 0), "■ DESATIVAR", Color3.fromRGB(150, 0, 0))
-freecamStatusLabel = addFullLabel(camTab, "Status: DESATIVADO", Color3.fromRGB(100, 200, 100))
+local camEnableBtn, camDisableBtn = addTwoButtons(camTab, t("enable"), Color3.fromRGB(0, 150, 0), t("disable"), Color3.fromRGB(150, 0, 0))
+freecamStatusLabel = addFullLabel(camTab, t("status_inactive"), Color3.fromRGB(100, 200, 100))
 addInfoLabel(camTab, "Botão direito + mover = olhar. WASD move, Space/Ctrl sobe e desce, Shift acelera. F5 liga/desliga a qualquer momento, em qualquer aba. Personagem fica ancorado (parado) enquanto ativo.")
 
 camEnableBtn.MouseButton1Click:Connect(enableFreecam)
@@ -2326,9 +2867,9 @@ camDisableBtn.MouseButton1Click:Connect(disableFreecam)
 -- --- ABA CARRO ---
 
 local carTab = tabFrames.car
-addSectionLabel(carTab, "IMPULSO DA PISTA (BOOST)", Color3.fromRGB(0, 220, 220))
+addSectionLabel(carTab, t("sec_car_boost"), Color3.fromRGB(0, 220, 220))
 
-local carForceInput = addTextField(carTab, "Força do impulso:", carBoostConfig.force)
+local carForceInput = addTextField(carTab, t("lbl_boost_force"), carBoostConfig.force)
 carForceInput.FocusLost:Connect(function()
     local val = tonumber(carForceInput.Text)
     if val and val > 0 then
@@ -2344,26 +2885,134 @@ carToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 carToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 carToggleBtn.TextSize = 12
 carToggleBtn.Font = Enum.Font.GothamBold
-carToggleBtn.Text = "✗ ATIVAR IMPULSO (segure SHIFT pra usar)"
+carToggleBtn.Text = t("btn_enable_boost")
 carToggleBtn.LayoutOrder = tabOrder(carTab)
 carToggleBtn.Parent = carTab
 carToggleBtn.MouseButton1Click:Connect(function()
     carBoostConfig.enabled = not carBoostConfig.enabled
     carToggleBtn.BackgroundColor3 = carBoostConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
-    carToggleBtn.Text = (carBoostConfig.enabled and "✓ " or "✗ ") .. "ATIVAR IMPULSO (segure SHIFT pra usar)"
 end)
 
-carStatusLabel = addFullLabel(carTab, "Status: DESLIGADO", Color3.fromRGB(100, 200, 100))
+carStatusLabel = addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100))
 
 addInfoLabel(carTab, "Com o impulso ATIVADO, segurar SHIFT empurra o carro pra frente com força extra a cada instante -- solta e para na hora, sem esperar desacelerar. Só funciona enquanto você está dentro do carro na pista. Ajuste a força se sentir fraco ou forte demais.")
+
+-- --- ABA PROPS (LOCAL, SÓ PRA VOCÊ) ---
+
+local propsTab = tabFrames.props
+addSectionLabel(propsTab, t("sec_clone_map"), Color3.fromRGB(255, 180, 80))
+
+local crosshairToggleBtn = Instance.new("TextButton")
+crosshairToggleBtn.Size = UDim2.new(1, 0, 0, 26)
+crosshairToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
+crosshairToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+crosshairToggleBtn.TextSize = 11
+crosshairToggleBtn.Font = Enum.Font.GothamBold
+crosshairToggleBtn.Text = t("btn_show_crosshair")
+crosshairToggleBtn.LayoutOrder = tabOrder(propsTab)
+crosshairToggleBtn.Parent = propsTab
+crosshairToggleBtn.MouseButton1Click:Connect(function()
+    Props.crosshairLabel.Visible = not Props.crosshairLabel.Visible
+    crosshairToggleBtn.BackgroundColor3 = Props.crosshairLabel.Visible and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
+end)
+
+local cloneBtn = addButton(propsTab, t("btn_clone_looked"), Color3.fromRGB(150, 100, 0), 34)
+cloneBtn.MouseButton1Click:Connect(function() Props.clone() end)
+
+local propsDistanceInput = addTextField(propsTab, t("lbl_aim_distance"), Props.config.spawnDistance)
+propsDistanceInput.FocusLost:Connect(function()
+    local val = tonumber(propsDistanceInput.Text)
+    if val and val > 0 then
+        Props.config.spawnDistance = val
+    else
+        propsDistanceInput.Text = tostring(Props.config.spawnDistance)
+    end
+end)
+
+addDivider(propsTab)
+addSectionLabel(propsTab, t("sec_selected_object"), Color3.fromRGB(0, 200, 255))
+Props.setStatusLabel(addFullLabel(propsTab, t("label_none_selected"), Color3.fromRGB(150, 150, 150)))
+
+local selectModeBtn = addButton(propsTab, t("btn_select_mode"), Color3.fromRGB(60, 60, 60), 30)
+selectModeBtn.MouseButton1Click:Connect(function()
+    local enabled = Props.toggleSelectMode()
+    selectModeBtn.BackgroundColor3 = enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
+end)
+
+local carryBtn = addButton(propsTab, t("btn_carry"), Color3.fromRGB(90, 90, 200), 30)
+carryBtn.MouseButton1Click:Connect(function() Props.toggleCarry() end)
+
+local attachBtn = addButton(propsTab, t("btn_attach"), Color3.fromRGB(0, 150, 100), 30)
+attachBtn.MouseButton1Click:Connect(function() Props.attach() end)
+
+local detachBtn, anchorBtn = addTwoButtons(propsTab, t("btn_detach"), Color3.fromRGB(150, 100, 0), t("btn_toggle_anchor"), Color3.fromRGB(60, 60, 60))
+detachBtn.MouseButton1Click:Connect(function() Props.detach() end)
+anchorBtn.MouseButton1Click:Connect(function() Props.toggleAnchor() end)
+
+local scaleDownBtn, scaleUpBtn = addTwoButtons(propsTab, t("btn_shrink"), Color3.fromRGB(60, 60, 60), t("btn_grow"), Color3.fromRGB(60, 60, 60))
+scaleDownBtn.MouseButton1Click:Connect(function() Props.scale(0.8) end)
+scaleUpBtn.MouseButton1Click:Connect(function() Props.scale(1.25) end)
+
+local deleteBtn, clearAllBtn = addTwoButtons(propsTab, t("btn_delete"), Color3.fromRGB(150, 0, 0), t("btn_clear_all"), Color3.fromRGB(150, 0, 0))
+deleteBtn.MouseButton1Click:Connect(function() Props.delete() end)
+clearAllBtn.MouseButton1Click:Connect(function() Props.clearAll() end)
+
+addInfoLabel(propsTab, "100% local -- SÓ VOCÊ VÊ as cópias, ninguém mais no servidor enxerga (LocalScript não tem canal de rede pra replicar isso). CLONAR duplica exatamente o objeto (ou o Model inteiro, se fizer parte de um) que estiver embaixo da flecha no centro da tela, dentro da distância configurada. MODO SELEÇÃO liga o clique-pra-selecionar num objeto já clonado; depois SEGURAR carrega ele na frente da câmera até clicar de novo pra soltar; GRUDAR cola ele fisicamente (WeldConstraint) no que estiver na mira -- útil pra grudar em algo que se move, tipo um carro.")
+
+addDivider(propsTab)
+addSectionLabel(propsTab, t("sec_time_of_day"), Color3.fromRGB(150, 170, 255))
+
+local timeToggleBtn = Instance.new("TextButton")
+timeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
+timeToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+timeToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+timeToggleBtn.TextSize = 11
+timeToggleBtn.Font = Enum.Font.GothamBold
+timeToggleBtn.Text = t("btn_keep_fixed")
+timeToggleBtn.LayoutOrder = tabOrder(propsTab)
+timeToggleBtn.Parent = propsTab
+timeToggleBtn.MouseButton1Click:Connect(function()
+    timeOfDayConfig.enabled = not timeOfDayConfig.enabled
+    timeToggleBtn.BackgroundColor3 = timeOfDayConfig.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
+    if timeOfDayConfig.enabled then applyTimeOfDay() end
+end)
+
+local dawnBtn, dayBtn = addTwoButtons(propsTab, t("btn_dawn"), Color3.fromRGB(255, 170, 100), t("btn_day"), Color3.fromRGB(255, 210, 80))
+local duskBtn, nightBtn = addTwoButtons(propsTab, t("btn_dusk"), Color3.fromRGB(230, 120, 60), t("btn_night"), Color3.fromRGB(40, 50, 90))
+
+local timeInput = addTextField(propsTab, t("lbl_exact_hour"), timeOfDayConfig.clockTime)
+timeInput.FocusLost:Connect(function()
+    local val = tonumber(timeInput.Text)
+    if val and val >= 0 and val <= 24 then
+        timeOfDayConfig.clockTime = val
+        timeOfDayConfig.enabled = true
+        timeToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
+        applyTimeOfDay()
+    else
+        timeInput.Text = tostring(timeOfDayConfig.clockTime)
+    end
+end)
+
+local function setTimePreset(hour)
+    timeOfDayConfig.clockTime = hour
+    timeOfDayConfig.enabled = true
+    timeToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
+    timeInput.Text = tostring(hour)
+    applyTimeOfDay()
+end
+
+dawnBtn.MouseButton1Click:Connect(function() setTimePreset(6) end)
+dayBtn.MouseButton1Click:Connect(function() setTimePreset(12) end)
+duskBtn.MouseButton1Click:Connect(function() setTimePreset(18) end)
+nightBtn.MouseButton1Click:Connect(function() setTimePreset(0) end)
 
 -- --- ABA ESP ---
 
 local espTab = tabFrames.esp
-addSectionLabel(espTab, "ESP (VER JOGADORES)", Color3.fromRGB(255, 60, 60))
-local espEnableBtn, espDisableBtn = addTwoButtons(espTab, "▶ ATIVAR", Color3.fromRGB(0, 150, 0), "■ DESATIVAR", Color3.fromRGB(150, 0, 0))
-espStatusLabel = addFullLabel(espTab, "Status: DESATIVADO", Color3.fromRGB(100, 200, 100))
-local espDistanceInput = addTextField(espTab, "Distância máxima (studs):", espConfig.maxDistance)
+addSectionLabel(espTab, t("sec_esp"), Color3.fromRGB(255, 60, 60))
+local espEnableBtn, espDisableBtn = addTwoButtons(espTab, t("enable"), Color3.fromRGB(0, 150, 0), t("disable"), Color3.fromRGB(150, 0, 0))
+espStatusLabel = addFullLabel(espTab, t("status_inactive"), Color3.fromRGB(100, 200, 100))
+local espDistanceInput = addTextField(espTab, t("lbl_esp_distance"), espConfig.maxDistance)
 espDistanceInput.FocusLost:Connect(function()
     local val = tonumber(espDistanceInput.Text)
     if val and val > 0 then
@@ -2380,12 +3029,12 @@ espDisableBtn.MouseButton1Click:Connect(disableEsp)
 -- --- ABA ANIM ---
 
 local animTab = tabFrames.anim
-addSectionLabel(animTab, "ANIMAÇÃO CUSTOM (SÓ IDLE)", Color3.fromRGB(255, 200, 0))
+addSectionLabel(animTab, t("sec_anim_idle"), Color3.fromRGB(255, 200, 0))
 
-local idleBox = addTextField(animTab, "Animation ID do IDLE (parado):", animConfig.idleId)
+local idleBox = addTextField(animTab, t("lbl_idle_id"), animConfig.idleId)
 idleBox.FocusLost:Connect(function() animConfig.idleId = idleBox.Text end)
 
-local captureBtn = addButton(animTab, "📋 CAPTURAR ANIMAÇÃO ATUAL → IDLE (toque o emote antes de clicar)", Color3.fromRGB(90, 90, 200), 32)
+local captureBtn = addButton(animTab, t("btn_capture_anim"), Color3.fromRGB(90, 90, 200), 32)
 captureBtn.MouseButton1Click:Connect(function()
     local id = getCurrentPlayingAnimId()
     if id then
@@ -2397,7 +3046,7 @@ captureBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local diagBtn = addButton(animTab, "🔍 DIAGNOSTICAR (mostra estrutura do Animate no console)", Color3.fromRGB(150, 100, 0), 32)
+local diagBtn = addButton(animTab, t("btn_diagnose"), Color3.fromRGB(150, 100, 0), 32)
 diagBtn.MouseButton1Click:Connect(function() debugAnimateStructure() end)
 
 local animToggleBtn = Instance.new("TextButton")
@@ -2406,21 +3055,19 @@ animToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 animToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 animToggleBtn.TextSize = 12
 animToggleBtn.Font = Enum.Font.GothamBold
-animToggleBtn.Text = "✗ APLICAR (só idle -- o resto continua normal)"
+animToggleBtn.Text = t("btn_apply_idle")
 animToggleBtn.LayoutOrder = tabOrder(animTab)
 animToggleBtn.Parent = animTab
 animToggleBtn.MouseButton1Click:Connect(function()
     animConfig.enabled = not animConfig.enabled
     animToggleBtn.BackgroundColor3 = animConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
-    animToggleBtn.Text = (animConfig.enabled and "✓ " or "✗ ") .. "APLICAR (só idle -- o resto continua normal)"
     if animConfig.enabled then applyForcedIdle() end
 end)
 
-local animReapplyBtn = addButton(animTab, "🔄 REAPLICAR (depois de mudar o ID)", Color3.fromRGB(90, 90, 200), 32)
+local animReapplyBtn = addButton(animTab, t("btn_reapply"), Color3.fromRGB(90, 90, 200), 32)
 animReapplyBtn.MouseButton1Click:Connect(function()
     animConfig.enabled = true
     animToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
-    animToggleBtn.Text = "✓ APLICAR (só idle -- o resto continua normal)"
     applyForcedIdle()
 end)
 
@@ -2429,32 +3076,32 @@ addInfoLabel(animTab, "IDLE toca separado (prioridade alta, sem reiniciar sozinh
 -- --- ABA WEBHOOK ---
 
 local webhookTab = tabFrames.webhook
-addSectionLabel(webhookTab, "DISCORD WEBHOOK", Color3.fromRGB(114, 137, 218))
-local webhookUrlBox = addTextField(webhookTab, "URL do Webhook:", "")
+addSectionLabel(webhookTab, t("sec_discord_webhook"), Color3.fromRGB(114, 137, 218))
+local webhookUrlBox = addTextField(webhookTab, t("lbl_webhook_url"), "")
 webhookUrlBox.FocusLost:Connect(function()
     webhookConfig.url = webhookUrlBox.Text
 end)
-local webhookTestBtn = addButton(webhookTab, "🧪 TESTAR", Color3.fromRGB(90, 90, 200), 32)
+local webhookTestBtn = addButton(webhookTab, t("btn_test"), Color3.fromRGB(90, 90, 200), 32)
 webhookTestBtn.MouseButton1Click:Connect(function()
     webhookConfig.url = webhookUrlBox.Text
     sendDiscordWebhook("✅ Teste", "Webhook configurado com sucesso no MEGA RAMP HUB!", Color3.fromRGB(0, 190, 100))
 end)
 
 addDivider(webhookTab)
-addSectionLabel(webhookTab, "NOTIFICAR QUANDO:", Color3.fromRGB(200, 200, 200))
-webhookToggles.limited = addToggleRow(webhookTab, "Achar Limited/Rainbow", true)
-webhookToggles.memory = addToggleRow(webhookTab, "Ganhar na Memória", false)
-webhookToggles.hitslime = addToggleRow(webhookTab, "Ganhar no Bata o Slime", false)
-webhookToggles.event = addToggleRow(webhookTab, "Ativar evento (Ramp)", false)
+addSectionLabel(webhookTab, t("sec_notify_when"), Color3.fromRGB(200, 200, 200))
+webhookToggles.limited = addToggleRow(webhookTab, t("toggle_find_limited"), true)
+webhookToggles.memory = addToggleRow(webhookTab, t("toggle_win_memory"), false)
+webhookToggles.hitslime = addToggleRow(webhookTab, t("toggle_win_hitslime"), false)
+webhookToggles.event = addToggleRow(webhookTab, t("toggle_activate_event"), false)
 
 addInfoLabel(webhookTab, "Precisa que o executor suporte request/http_request/syn.request pra funcionar. Clique TESTAR pra confirmar que o link tá certo.")
 
 -- --- ABA JOGADORES ---
 
 local playersTab = tabFrames.players
-addSectionLabel(playersTab, "JOGADORES NA PARTIDA", Color3.fromRGB(0, 150, 255))
-playersStatusLabel = addFullLabel(playersTab, "Status: NENHUM (câmera normal)", Color3.fromRGB(100, 200, 100))
-local stopSpectateBtnUi = addButton(playersTab, "⏹ PARAR SPECTATE", Color3.fromRGB(150, 0, 0), 32)
+addSectionLabel(playersTab, t("sec_players_in_match"), Color3.fromRGB(0, 150, 255))
+playersStatusLabel = addFullLabel(playersTab, t("status_none_normal_cam"), Color3.fromRGB(100, 200, 100))
+local stopSpectateBtnUi = addButton(playersTab, t("btn_stop_spectate"), Color3.fromRGB(150, 0, 0), 32)
 stopSpectateBtnUi.MouseButton1Click:Connect(function() stopSpectate() end)
 
 addInfoLabel(playersTab, "Spectate é 100% real: só muda SUA câmera pra seguir o jogador escolhido, seu personagem continua parado onde estava. NÃO dá pra ativar automações (tipo o ciclo do Mega Ramp) no client de outro jogador remotamente -- cada um precisaria rodar o próprio script pra isso.")
@@ -2505,7 +3152,7 @@ local function rebuildPlayerRows()
             specBtn.TextColor3 = Color3.new(1, 1, 1)
             specBtn.TextSize = 10
             specBtn.Font = Enum.Font.GothamBold
-            specBtn.Text = "👁 SPECTATE"
+            specBtn.Text = t("btn_spectate")
             specBtn.Parent = row
 
             specBtn.MouseButton1Click:Connect(function()
@@ -2521,7 +3168,7 @@ local function rebuildPlayerRows()
         emptyLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
         emptyLbl.TextSize = 10
         emptyLbl.Font = Enum.Font.Gotham
-        emptyLbl.Text = "Nenhum outro jogador na partida."
+        emptyLbl.Text = t("lbl_no_other_players")
         emptyLbl.LayoutOrder = 1
         emptyLbl.Parent = rowsContainer
     end
@@ -2533,7 +3180,7 @@ Players.PlayerRemoving:Connect(function() task.wait(0.15) rebuildPlayerRows() en
 rebuildPlayerRows()
 
 addDivider(playersTab)
-addSectionLabel(playersTab, "🏆 TOP 5 (CASH) - AO VIVO", Color3.fromRGB(255, 215, 0))
+addSectionLabel(playersTab, t("sec_top5"), Color3.fromRGB(255, 215, 0))
 addInfoLabel(playersTab, "Vem direto do placar Top 5 que o servidor já manda pra todo mundo (remote LeaderboardUpdate) -- não precisei construir nada, só escutei o mesmo remote que o próprio jogo usa pra desenhar aquele painel.")
 
 local leaderboardRowsContainer = Instance.new("Frame")
@@ -2577,7 +3224,7 @@ refreshLeaderboardUI = function()
         emptyLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
         emptyLbl.TextSize = 10
         emptyLbl.Font = Enum.Font.Gotham
-        emptyLbl.Text = "Aguardando dados do servidor..."
+        emptyLbl.Text = t("lbl_waiting_server")
         emptyLbl.LayoutOrder = 1
         emptyLbl.Parent = leaderboardRowsContainer
         return
@@ -2609,10 +3256,148 @@ end
 
 refreshLeaderboardUI()
 
+-- --- ABA SLIMES: equipar por índice + gift ---
+
+local slimesTab = tabFrames.slimes
+addSectionLabel(slimesTab, t("sec_equip_by_index"), Color3.fromRGB(0, 190, 100))
+addInfoLabel(slimesTab, "Cada slime do inventário tem um índice (posição na lista que o jogo já manda pro client). Clicar EQUIPAR na lista abaixo dispara o MESMO remote que o botão do inventário do jogo dispara -- só que direto, sem precisar abrir a UI. Sobre prever o item da caixa (limited/rainbow etc): não dá -- o resultado é sorteado 100% no servidor e só chega pro client DEPOIS de decidido, sem nenhuma seed/prévia vazando antes. Isso aqui só funciona porque o jogo já deixa o client escolher livremente qual slime equipar/doar -- a raridade da caixa não passa por esse mesmo caminho.")
+
+local slimesRowsContainer = Instance.new("Frame")
+slimesRowsContainer.Size = UDim2.new(1, 0, 0, 0)
+slimesRowsContainer.AutomaticSize = Enum.AutomaticSize.Y
+slimesRowsContainer.BackgroundTransparency = 1
+slimesRowsContainer.LayoutOrder = tabOrder(slimesTab)
+slimesRowsContainer.Parent = slimesTab
+
+local slimesRowsLayout = Instance.new("UIListLayout")
+slimesRowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+slimesRowsLayout.Padding = UDim.new(0, 3)
+slimesRowsLayout.Parent = slimesRowsContainer
+
+refreshInventoryUI = function()
+    for _, child in ipairs(slimesRowsContainer:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    local list = latestInventoryList or {}
+    if #list == 0 then
+        local emptyLbl = Instance.new("TextLabel")
+        emptyLbl.Size = UDim2.new(1, 0, 0, 20)
+        emptyLbl.BackgroundTransparency = 1
+        emptyLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
+        emptyLbl.TextSize = 10
+        emptyLbl.Font = Enum.Font.Gotham
+        emptyLbl.Text = t("lbl_waiting_inventory")
+        emptyLbl.LayoutOrder = 1
+        emptyLbl.Parent = slimesRowsContainer
+        return
+    end
+
+    for i, item in ipairs(list) do
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 26)
+        row.BackgroundColor3 = (latestEquippedIndex == i) and Color3.fromRGB(0, 90, 50) or Color3.fromRGB(40, 40, 40)
+        row.LayoutOrder = i
+        row.Parent = slimesRowsContainer
+
+        local itemName = tostring(item.Name or item.Rarity or "?")
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.75, -6, 1, 0)
+        lbl.Position = UDim2.new(0, 6, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = Color3.new(1, 1, 1)
+        lbl.TextSize = 10
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = "#" .. i .. " " .. itemName .. " (Lv" .. tostring(item.Level or 1) .. ", $" .. tostring(item.Income or 0) .. "/s)"
+        lbl.Parent = row
+
+        local eqBtn = Instance.new("TextButton")
+        eqBtn.Size = UDim2.new(0.25, -6, 1, -4)
+        eqBtn.Position = UDim2.new(0.75, 0, 0, 2)
+        eqBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+        eqBtn.TextColor3 = Color3.new(1, 1, 1)
+        eqBtn.TextSize = 10
+        eqBtn.Font = Enum.Font.GothamBold
+        eqBtn.Text = (latestEquippedIndex == i) and t("lbl_equipped") or t("lbl_equip")
+        eqBtn.Parent = row
+
+        eqBtn.MouseButton1Click:Connect(function()
+            equipSlimeByIndex(i)
+        end)
+    end
+end
+
+refreshInventoryUI()
+
+addDivider(slimesTab)
+addSectionLabel(slimesTab, t("sec_manual_equip"), Color3.fromRGB(200, 200, 200))
+local manualIndexBox = addTextField(slimesTab, t("lbl_index_manual"), "0")
+local manualEquipBtn = addButton(slimesTab, t("btn_equip_index"), Color3.fromRGB(0, 120, 200), 32)
+manualEquipBtn.MouseButton1Click:Connect(function()
+    local idx = tonumber(manualIndexBox.Text)
+    if idx then
+        equipSlimeByIndex(math.floor(idx))
+    else
+        addLog("[SLIMES] [!] Índice inválido")
+    end
+end)
+
+addDivider(slimesTab)
+addSectionLabel(slimesTab, t("sec_send_gift"), Color3.fromRGB(255, 140, 220))
+local giftPlayerBox = addTextField(slimesTab, t("lbl_gift_target"), "")
+local giftIndexBox = addTextField(slimesTab, t("lbl_gift_index"), "0")
+local giftSendBtn = addButton(slimesTab, t("btn_send_gift"), Color3.fromRGB(200, 60, 160), 32)
+giftSendBtn.MouseButton1Click:Connect(function()
+    local target = findPlayerByNameFragment(giftPlayerBox.Text)
+    local idx = tonumber(giftIndexBox.Text)
+    if not target then
+        addLog("[GIFT] [!] Jogador não encontrado: " .. tostring(giftPlayerBox.Text))
+        return
+    end
+    if not idx then
+        addLog("[GIFT] [!] Índice inválido")
+        return
+    end
+    sendGiftByIndex(target, math.floor(idx))
+end)
+addInfoLabel(slimesTab, "GiftAction:FireServer(\"RequestGift\", jogador, índice) é o MESMO remote que o prompt \"Gift Slime\" dispara ao lado de outro jogador -- pode ser que o servidor exija estar fisicamente perto do prompt dele antes de aceitar; se não funcionar de longe, é o servidor validando distância (bom sinal de segurança).")
+
+-- --- ABA CONFIGURACOES ---
+
+local settingsTab = tabFrames.settings
+addSectionLabel(settingsTab, t("settings_title"), Color3.fromRGB(120, 190, 255))
+
+local langPtBtn = addButton(settingsTab, "Portugues", Color3.fromRGB(60, 60, 60), 32)
+local langEnBtn = addButton(settingsTab, "English", Color3.fromRGB(60, 60, 60), 32)
+local langEsBtn = addButton(settingsTab, "Espanol", Color3.fromRGB(60, 60, 60), 32)
+
+local langButtons = { pt = langPtBtn, en = langEnBtn, es = langEsBtn }
+
+local function refreshLangButtons()
+    for lang, btn in pairs(langButtons) do
+        btn.BackgroundColor3 = (Language.current == lang) and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
+    end
+end
+refreshLangButtons()
+
+local function setLanguage(lang)
+    Language.current = lang
+    addLog("[CONFIG] Idioma definido: " .. lang .. ", reconstruindo o menu...")
+    lastSelectedTabKey = "settings"
+    setupMenu()
+end
+
+langPtBtn.MouseButton1Click:Connect(function() setLanguage("pt") end)
+langEnBtn.MouseButton1Click:Connect(function() setLanguage("en") end)
+langEsBtn.MouseButton1Click:Connect(function() setLanguage("es") end)
+
+addInfoLabel(settingsTab, t("settings_info"))
+
 -- --- RESPONSIVO + MINIMIZAR ---
 
-local MIN_W, MAX_W = 290, 380
-local MIN_H, MAX_H = 320, 560
+local MIN_W, MAX_W = 380, 480
+local MIN_H, MAX_H = 340, 580
 
 local expandedHeight = 420
 local minimized = false
@@ -2648,7 +3433,7 @@ minimizeBtn.MouseButton1Click:Connect(function()
     minimizeBtn.Text = minimized and "▢" or "—"
 end)
 
-selectTab("ramp")
+selectTab(lastSelectedTabKey)
 
 addLog("Hub carregado. Use as abas pra navegar. F5 liga/desliga a Free Cam a qualquer momento.")
 print("[+] MEGA RAMP HUB carregado!")
