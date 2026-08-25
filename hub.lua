@@ -45,6 +45,7 @@ local T = {
     tab_players = { pt = "Espectar", en = "Spectate", es = "Espectar" },
     tab_slimes = { pt = "Inventario", en = "Inventory", es = "Inventario" },
     tab_settings = { pt = "Configuracoes", en = "Settings", es = "Ajustes" },
+    tab_spy = { pt = "Remote Spy", en = "Remote Spy", es = "Remote Spy" },
 
     start = { pt = "Iniciar", en = "Start", es = "Iniciar" },
     stop = { pt = "Parar", en = "Stop", es = "Detener" },
@@ -149,6 +150,38 @@ local T = {
     btn_send_gift = { pt = "Enviar Gift", en = "Send Gift", es = "Enviar Regalo" },
     lbl_equipped = { pt = "Equipado", en = "Equipped", es = "Equipado" },
     lbl_equip = { pt = "Equipar", en = "Equip", es = "Equipar" },
+
+    status_flying = { pt = "Status: VOANDO", en = "Status: FLYING", es = "Estado: VOLANDO" },
+    sec_fly = { pt = "FLY / NO-CLIP COM O CARRO", en = "FLY / NO-CLIP WITH CAR", es = "VOLAR / NO-CLIP CON EL AUTO" },
+    btn_fly_toggle = { pt = "Ativar Fly (No-Clip)", en = "Enable Fly (No-Clip)", es = "Activar Volar (No-Clip)" },
+    sec_checkpoint_dup = { pt = "DUPLICAR CHECKPOINTS", en = "DUPLICATE CHECKPOINTS", es = "DUPLICAR CHECKPOINTS" },
+    lbl_offset_z = { pt = "Offset Z entre original e cópia (studs):", en = "Z offset between original and copy (studs):", es = "Offset Z entre original y copia (studs):" },
+    btn_dup_checkpoints = { pt = "Duplicar Todos os Checkpoints", en = "Duplicate All Checkpoints", es = "Duplicar Todos los Checkpoints" },
+    btn_clear_dup_checkpoints = { pt = "Remover Duplicados", en = "Remove Duplicates", es = "Eliminar Duplicados" },
+    sec_checkpoint_extra = { pt = "CRIAR CHECKPOINTS ALÉM DO MÁXIMO", en = "CREATE CHECKPOINTS BEYOND MAX", es = "CREAR CHECKPOINTS MÁS ALLÁ DEL MÁXIMO" },
+    lbl_extra_count = { pt = "Quantidade de novos checkpoints:", en = "Number of new checkpoints:", es = "Cantidad de nuevos checkpoints:" },
+    lbl_extra_spacing = { pt = "Espaçamento entre eles (studs):", en = "Spacing between them (studs):", es = "Espaciado entre ellos (studs):" },
+    btn_create_extra = { pt = "Criar Checkpoints Extras", en = "Create Extra Checkpoints", es = "Crear Checkpoints Extra" },
+    btn_auto_trigger_extra = { pt = "Disparar Todos Automaticamente", en = "Auto-Trigger All", es = "Disparar Todos Automáticamente" },
+
+    sec_remote_spy = { pt = "REMOTE SPY (AO VIVO)", en = "REMOTE SPY (LIVE)", es = "REMOTE SPY (EN VIVO)" },
+    btn_spy_enable = { pt = "Ativar Spy", en = "Enable Spy", es = "Activar Spy" },
+    btn_spy_disable = { pt = "Desativar Spy", en = "Disable Spy", es = "Desactivar Spy" },
+    btn_spy_copy = { pt = "Copiar Log", en = "Copy Log", es = "Copiar Log" },
+    btn_spy_clear = { pt = "Limpar Log", en = "Clear Log", es = "Limpiar Log" },
+    lbl_spy_unsupported = { pt = "Status: EXECUTOR NÃO SUPORTA (falta hookmetamethod)", en = "Status: EXECUTOR NOT SUPPORTED (missing hookmetamethod)", es = "Estado: EXECUTOR NO SOPORTADO (falta hookmetamethod)" },
+
+    sec_function_spy = { pt = "FUNCTION SPY (FUNÇÃO REAL DO CHECKPOINT)", en = "FUNCTION SPY (REAL CHECKPOINT FUNCTION)", es = "FUNCTION SPY (FUNCIÓN REAL DEL CHECKPOINT)" },
+    btn_capture_fn = { pt = "Capturar Função Real do Checkpoint", en = "Capture Real Checkpoint Function", es = "Capturar Función Real del Checkpoint" },
+    btn_call_fn = { pt = "Chamar Função Real (com o carro)", en = "Call Real Function (with car)", es = "Llamar Función Real (con el auto)" },
+
+    sec_weather = { pt = "CLIMA (SÓ VOCÊ VÊ)", en = "WEATHER (ONLY YOU SEE)", es = "CLIMA (SOLO TU VES)" },
+    btn_weather_clear = { pt = "Limpo", en = "Clear", es = "Despejado" },
+    btn_weather_rain = { pt = "Chuva", en = "Rain", es = "Lluvia" },
+    btn_weather_storm = { pt = "Tempestade", en = "Storm", es = "Tormenta" },
+    btn_weather_fog = { pt = "Neblina", en = "Fog", es = "Niebla" },
+    btn_weather_snow = { pt = "Neve", en = "Snow", es = "Nieve" },
+    btn_weather_sandstorm = { pt = "Tempestade de Areia", en = "Sandstorm", es = "Tormenta de Arena" },
 }
 
 local function t(key)
@@ -198,6 +231,7 @@ local giftActionRemote = findRemote("GiftAction")
 local miniGameMemoryEvent = findRemote("MiniGame1MemoryEvent")
 local miniGameButton = Workspace:WaitForChild("MiniGame1Button")
 local leaderboardUpdateRemote = findRemote("LeaderboardUpdate")
+local miniParkourEventRemote = findRemote("MiniParkourEvent")
 
 -- Top 5 leaderboard (Cash/renda base/carros de cada jogador) que o próprio
 -- jogo já transmite pra todo mundo -- só precisamos ouvir o mesmo remote,
@@ -1009,6 +1043,30 @@ local function clickOpenBoxMultiple()
     end
 end
 
+-- Auto-clicker independente do ciclo automático: sempre que a caixa abrir
+-- (StartBoxReveal), dispara os cliques rápidos na hora, mesmo com o Mega
+-- Rampa Loop (aba de automação) desligado.
+local autoBoxClickRunning = false
+local function autoClickOpenBoxNow()
+    if not openBoxClickRemote then return end
+    if autoBoxClickRunning then return end
+    autoBoxClickRunning = true
+
+    for i = 1, rampConfig.openBoxClicks do
+        pcall(function() openBoxClickRemote:FireServer() end)
+        task.wait(rampConfig.openBoxClickDelay)
+    end
+
+    autoBoxClickRunning = false
+end
+
+if startBoxRevealRemote then
+    startBoxRevealRemote.OnClientEvent:Connect(function()
+        task.spawn(autoClickOpenBoxNow)
+    end)
+    addLog("[RAMP] [*] Auto-click da caixa ativo (independente do loop)")
+end
+
 local function forceTeleportToJumpCar()
     if retryRunRemote then
         pcall(function() retryRunRemote:FireServer() end)
@@ -1068,12 +1126,10 @@ local function runTeleportLoopForDuration(durationSeconds)
 
             if launchData then
                 teleportToCheckpoint()
-                local started = waitForEvent(startBoxRevealRemote, 8)
-
-                if started then
-                    clickOpenBoxMultiple()
-                end
-
+                waitForEvent(startBoxRevealRemote, 8)
+                -- Os cliques em si são disparados pelo listener global
+                -- autoClickOpenBoxNow (StartBoxReveal.OnClientEvent), que
+                -- roda sempre, com ou sem o loop ativo.
                 waitForEvent(endBoxRevealRemote, 12)
             end
         end
@@ -1916,6 +1972,750 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 -- ========================================
+-- FLY / NO-CLIP COM O CARRO: desliga a colisão do carro inteiro e deixa
+-- mover ele livremente (voando) com WASD/Space/Ctrl relativo à câmera,
+-- igual o Free Cam -- mas movendo o carro (com você sentado) em vez da
+-- câmera. Tudo dentro de uma função própria pra não gastar registro de
+-- variável local do chunk principal.
+-- ========================================
+
+local function buildCarFlyFeature()
+    local flyConfig = { active = false, speed = 90, boostMultiplier = 3 }
+    local savedCollide = {}
+    local connections = {}
+    local statusLabel = nil
+
+    local function disconnectAll()
+        for _, conn in ipairs(connections) do conn:Disconnect() end
+        connections = {}
+    end
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
+        end
+    end
+
+    local function enable()
+        if flyConfig.active then return end
+        local car = findPlayerCarModel()
+        if not car then
+            addLog("[FLY] [!] Model do carro não encontrado")
+            return
+        end
+
+        savedCollide = {}
+        for _, part in ipairs(car:GetDescendants()) do
+            if part:IsA("BasePart") then
+                savedCollide[part] = part.CanCollide
+                part.CanCollide = false
+            end
+        end
+
+        flyConfig.active = true
+        setStatus(t("status_flying"), Color3.fromRGB(0, 220, 220))
+        addLog("[FLY] Ativado")
+
+        connections[#connections + 1] = RunService.RenderStepped:Connect(function(dt)
+            local currentCar = findPlayerCarModel()
+            if not currentCar then return end
+            local carPart = currentCar.PrimaryPart or currentCar:FindFirstChildWhichIsA("BasePart", true)
+            if not carPart then return end
+
+            local camera = Workspace.CurrentCamera
+            local camCFrame = camera.CFrame
+
+            local moveVector = Vector3.new()
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector += Vector3.new(0, 0, -1) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector += Vector3.new(0, 0, 1) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector += Vector3.new(-1, 0, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector += Vector3.new(1, 0, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector += Vector3.new(0, 1, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.C) then
+                moveVector += Vector3.new(0, -1, 0)
+            end
+
+            if moveVector.Magnitude == 0 then return end
+            moveVector = moveVector.Unit
+
+            local speed = flyConfig.speed
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                speed = speed * flyConfig.boostMultiplier
+            end
+
+            local worldMove = camCFrame:VectorToWorldSpace(moveVector) * speed * dt
+            local currentRotation = carPart.CFrame - carPart.CFrame.Position
+            local newCFrame = CFrame.new(carPart.Position + worldMove) * currentRotation
+
+            local ok = pcall(function()
+                if currentCar.PrimaryPart then
+                    currentCar:SetPrimaryPartCFrame(newCFrame)
+                else
+                    carPart.CFrame = newCFrame
+                end
+            end)
+            if ok then
+                carPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                carPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
+        end)
+    end
+
+    local function disable()
+        if not flyConfig.active then return end
+        flyConfig.active = false
+        disconnectAll()
+
+        for part, collide in pairs(savedCollide) do
+            if part.Parent then
+                part.CanCollide = collide
+            end
+        end
+        savedCollide = {}
+
+        setStatus(t("status_off"), Color3.fromRGB(100, 200, 100))
+        addLog("[FLY] Desativado")
+    end
+
+    local function toggle()
+        if flyConfig.active then disable() else enable() end
+    end
+
+    return {
+        config = flyConfig,
+        toggle = toggle,
+        disable = disable,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+    }
+end
+
+local CarFly = buildCarFlyFeature()
+
+-- ========================================
+-- DUPLICAR CHECKPOINTS: a pasta Checkpoints (usada pelo sistema de
+-- multiplicador da rampa) tem parts invisíveis que, ao tocar, disparam
+-- MiniParkourEvent:FireServer("CheckpointTouched", número) -- o PRÓPRIO
+-- CLIENT decide esse número (lido de um Attribute que o script do jogo
+-- também seta no client), e o jogo já tem um bloqueio de 1s contra
+-- disparar o MESMO número duas vezes rápido demais. Clonando cada
+-- checkpoint com um offset em Z, e conectando nosso PRÓPRIO Touched
+-- (Clone() não copia conexões de evento), dá pra tocar em duas parts
+-- fisicamente diferentes (original + clone) com mais de 1s de intervalo
+-- entre elas, cada uma disparando o remote de novo.
+-- ========================================
+
+local function buildCheckpointDuplicatorFeature()
+    local duplicatedParts = {}
+
+    local function findCheckpointsFolder()
+        local direct = Workspace:FindFirstChild("Checkpoints", true)
+        if direct and direct:IsA("Folder") then return direct end
+        return nil
+    end
+
+    local function wireDuplicateTouched(part, checkpointNumber)
+        part.CanTouch = true
+        part.CanCollide = false
+        part.Touched:Connect(function(hit)
+            if not hit then return end
+            local isMine = false
+            local character = LocalPlayer.Character
+            if character and hit:IsDescendantOf(character) then
+                isMine = true
+            else
+                local model = hit:FindFirstAncestorOfClass("Model")
+                isMine = model ~= nil and model:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+            end
+            if not isMine then return end
+            if not miniParkourEventRemote then return end
+            pcall(function() miniParkourEventRemote:FireServer("CheckpointTouched", checkpointNumber) end)
+            addLog("[CHECKPOINT-DUP] Disparado checkpoint " .. tostring(checkpointNumber))
+        end)
+    end
+
+    local function duplicateAll(offsetZ)
+        local folder = findCheckpointsFolder()
+        if not folder then
+            addLog("[CHECKPOINT-DUP] [!] Pasta 'Checkpoints' não encontrada")
+            return
+        end
+
+        local count = 0
+        for _, child in ipairs(folder:GetChildren()) do
+            local checkpointNumber = tonumber(child.Name)
+            if checkpointNumber then
+                local clone = child:Clone()
+                clone.Name = child.Name .. "_HubDup"
+
+                if clone:IsA("Model") then
+                    clone:PivotTo(child:GetPivot() + Vector3.new(0, 0, offsetZ))
+                elseif clone:IsA("BasePart") then
+                    clone.CFrame = child.CFrame + Vector3.new(0, 0, offsetZ)
+                end
+
+                clone.Parent = folder
+                table.insert(duplicatedParts, clone)
+
+                if clone:IsA("BasePart") then
+                    wireDuplicateTouched(clone, checkpointNumber)
+                else
+                    for _, part in ipairs(clone:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            wireDuplicateTouched(part, checkpointNumber)
+                        end
+                    end
+                end
+
+                count = count + 1
+            end
+        end
+
+        addLog("[CHECKPOINT-DUP] " .. count .. " checkpoint(s) duplicado(s) com offset Z=" .. tostring(offsetZ))
+    end
+
+    local function clearAll()
+        for _, part in ipairs(duplicatedParts) do
+            if part.Parent then part:Destroy() end
+        end
+        duplicatedParts = {}
+        addLog("[CHECKPOINT-DUP] Duplicados removidos")
+    end
+
+    local function getMaxCheckpoint(folder)
+        local maxNumber, maxChild = 0, nil
+        for _, child in ipairs(folder:GetChildren()) do
+            local n = tonumber(child.Name)
+            if n and n >= maxNumber then
+                maxNumber, maxChild = n, child
+            end
+        end
+        return maxNumber, maxChild
+    end
+
+    local function createBeyondMax(count, spacing)
+        local folder = findCheckpointsFolder()
+        if not folder then
+            addLog("[CHECKPOINT-DUP] [!] Pasta 'Checkpoints' não encontrada")
+            return {}
+        end
+
+        local maxNumber, template = getMaxCheckpoint(folder)
+        if not template then
+            addLog("[CHECKPOINT-DUP] [!] Nenhum checkpoint numerado encontrado pra usar de modelo")
+            return {}
+        end
+
+        local created = {}
+        for i = 1, count do
+            local newNumber = maxNumber + i
+            local clone = template:Clone()
+            clone.Name = tostring(newNumber)
+
+            if clone:IsA("Model") then
+                clone:PivotTo(template:GetPivot() + Vector3.new(0, 0, spacing * i))
+            elseif clone:IsA("BasePart") then
+                clone.CFrame = template.CFrame + Vector3.new(0, 0, spacing * i)
+            end
+
+            clone.Parent = folder
+            table.insert(duplicatedParts, clone)
+            table.insert(created, clone)
+
+            if clone:IsA("BasePart") then
+                clone:SetAttribute("MiniCheckpointNumber", newNumber)
+                wireDuplicateTouched(clone, newNumber)
+            else
+                for _, part in ipairs(clone:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part:SetAttribute("MiniCheckpointNumber", newNumber)
+                        wireDuplicateTouched(part, newNumber)
+                    end
+                end
+            end
+        end
+
+        addLog("[CHECKPOINT-DUP] " .. count .. " checkpoint(s) novo(s) criado(s) além do #" .. tostring(maxNumber))
+        return created
+    end
+
+    local function findTouchablePart(instance)
+        if instance:IsA("BasePart") then return instance end
+        for _, part in ipairs(instance:GetDescendants()) do
+            if part:IsA("BasePart") then return part end
+        end
+        return nil
+    end
+
+    -- O checkpoint precisa ser tocado pelo CARRO (é o carro que tem o
+    -- Attribute OwnerUserId que o Touched confere), não pelo seu
+    -- personagem andando -- por isso teleportar só o HumanoidRootPart
+    -- "bugava" o carro (ele ficava pra trás, ou o jogo tentava corrigir a
+    -- posição). Aqui a gente move o MODEL do carro mesmo, igual o ciclo
+    -- do Ramp já faz (moveCarTo/teleportToCheckpoint): sobe um pouco
+    -- antes de descer pra evitar prender no chão/geometria.
+    local function autoTriggerCreated(createdList, delaySeconds)
+        task.spawn(function()
+            local car = findPlayerCarModel()
+            if not car then
+                addLog("[CHECKPOINT-DUP] [!] Model do carro não encontrado pra auto-disparo -- entre no carro primeiro")
+                return
+            end
+
+            local carPart = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
+            if not carPart then
+                addLog("[CHECKPOINT-DUP] [!] Nenhuma BasePart no carro")
+                return
+            end
+
+            local savedCFrame = carPart.CFrame
+
+            for _, instance in ipairs(createdList) do
+                local part = findTouchablePart(instance)
+                if part then
+                    local currentCar = findPlayerCarModel()
+                    local currentCarPart = currentCar and (currentCar.PrimaryPart or currentCar:FindFirstChildWhichIsA("BasePart", true))
+                    if not currentCarPart then break end
+
+                    local currentRotation = currentCarPart.CFrame - currentCarPart.CFrame.Position
+                    local highCFrame = CFrame.new(part.Position + Vector3.new(0, 10, 0)) * currentRotation
+                    pcall(function()
+                        if currentCar.PrimaryPart then
+                            currentCar:SetPrimaryPartCFrame(highCFrame)
+                        else
+                            currentCarPart.CFrame = highCFrame
+                        end
+                    end)
+
+                    task.wait(0.2)
+
+                    local finalCFrame = CFrame.new(part.Position) * currentRotation
+                    pcall(function()
+                        if currentCar.PrimaryPart then
+                            currentCar:SetPrimaryPartCFrame(finalCFrame)
+                        else
+                            currentCarPart.CFrame = finalCFrame
+                        end
+                    end)
+
+                    task.wait(delaySeconds)
+                end
+            end
+
+            local finalCar = findPlayerCarModel()
+            local finalCarPart = finalCar and (finalCar.PrimaryPart or finalCar:FindFirstChildWhichIsA("BasePart", true))
+            if finalCarPart then
+                pcall(function()
+                    if finalCar.PrimaryPart then
+                        finalCar:SetPrimaryPartCFrame(savedCFrame)
+                    else
+                        finalCarPart.CFrame = savedCFrame
+                    end
+                end)
+            end
+            addLog("[CHECKPOINT-DUP] Auto-disparo concluído")
+        end)
+    end
+
+    return {
+        duplicateAll = duplicateAll,
+        clearAll = clearAll,
+        createBeyondMax = createBeyondMax,
+        autoTriggerCreated = autoTriggerCreated,
+    }
+end
+
+local CheckpointDup = buildCheckpointDuplicatorFeature()
+
+-- ========================================
+-- REMOTE SPY: loga ao vivo TODO FireServer/InvokeServer que sai do client
+-- (não só os que a gente mesmo dispara) via hookmetamethod no __namecall
+-- do jogo -- é assim que dá pra ver o que o PRÓPRIO JOGO manda pro
+-- servidor quando você vende, ganha, abre caixa etc., sem precisar ler o
+-- script decompilado e adivinhar. Também loga todo OnClientEvent que
+-- chega (servidor -> client) nos remotes existentes em ReplicatedStorage.
+-- Precisa que o executor suporte hookmetamethod/getrawmetatable/
+-- newcclosure -- se não suportar, avisa e só faz o lado de entrada
+-- (OnClientEvent), que não depende de hook nenhum.
+-- ========================================
+
+local function buildRemoteSpyFeature()
+    local MAX_ENTRIES = 200
+    local entries = {}
+    local enabled = false
+    local originalNamecall = nil
+    local refreshUI = nil
+    local incomingConnections = {}
+
+    local function serializeValue(v)
+        local ty = typeof(v)
+        if ty == "string" then
+            return "\"" .. v .. "\""
+        elseif ty == "Instance" then
+            local ok, full = pcall(function() return v:GetFullName() end)
+            return ok and full or ("<" .. v.ClassName .. ">")
+        elseif ty == "table" then
+            local ok, encoded = pcall(function() return HttpService:JSONEncode(v) end)
+            return ok and encoded or "<table>"
+        else
+            return tostring(v)
+        end
+    end
+
+    local function addEntry(direction, remoteName, method, args)
+        local parts = {}
+        for _, v in ipairs(args) do
+            table.insert(parts, serializeValue(v))
+        end
+        local line = string.format("[%s] %s %s(%s)", direction, remoteName, method, table.concat(parts, ", "))
+
+        table.insert(entries, line)
+        if #entries > MAX_ENTRIES then
+            table.remove(entries, 1)
+        end
+
+        print("[SPY] " .. line)
+        if refreshUI then refreshUI() end
+    end
+
+    -- Só usa acesso a PROPRIEDADE (self.ClassName, self.Name, self.Parent)
+    -- aqui dentro, nunca self:Metodo(...) -- qualquer chamada de método
+    -- (mesmo IsA/GetFullName) passa de novo pelo __namecall que a gente
+    -- acabou de hookear, e como esse hook roda pra TODA chamada de método
+    -- do jogo inteiro (não só remotes), cada FireServer disparava 2-3
+    -- passagens extras por ele mesmo -- multiplicado pela frequência de
+    -- chamadas do jogo isso travava a tela bem na hora do reveal.
+    local function getPathSafe(inst)
+        local ok, result = pcall(function()
+            local names = {}
+            local cur = inst
+            local hops = 0
+            while cur and hops < 6 do
+                table.insert(names, 1, cur.Name)
+                cur = cur.Parent
+                hops = hops + 1
+            end
+            return table.concat(names, ".")
+        end)
+        return ok and result or "?"
+    end
+
+    local function hookOutgoing()
+        if typeof(hookmetamethod) ~= "function" or typeof(getrawmetatable) ~= "function" then
+            return false
+        end
+
+        local ok = pcall(function()
+            local gameMeta = getrawmetatable(game)
+            local wasReadOnly = false
+            pcall(function()
+                if typeof(setreadonly) == "function" then
+                    wasReadOnly = true
+                    setreadonly(gameMeta, false)
+                end
+            end)
+
+            originalNamecall = gameMeta.__namecall
+            gameMeta.__namecall = newcclosure(function(self, ...)
+                local method = getnamecallmethod and getnamecallmethod() or ""
+                if method == "FireServer" or method == "InvokeServer" then
+                    local args = { ... }
+                    pcall(function()
+                        local className = self.ClassName
+                        if className == "RemoteEvent" or className == "RemoteFunction" then
+                            local path = getPathSafe(self)
+                            task.spawn(function()
+                                addEntry("OUT", path, method, args)
+                            end)
+                        end
+                    end)
+                end
+                return originalNamecall(self, ...)
+            end)
+
+            if wasReadOnly and typeof(setreadonly) == "function" then
+                setreadonly(gameMeta, true)
+            end
+        end)
+
+        return ok
+    end
+
+    local function unhookOutgoing()
+        if not originalNamecall then return end
+        pcall(function()
+            local gameMeta = getrawmetatable(game)
+            local wasReadOnly = false
+            pcall(function()
+                if typeof(setreadonly) == "function" then
+                    wasReadOnly = true
+                    setreadonly(gameMeta, false)
+                end
+            end)
+            gameMeta.__namecall = originalNamecall
+            if wasReadOnly and typeof(setreadonly) == "function" then
+                setreadonly(gameMeta, true)
+            end
+        end)
+        originalNamecall = nil
+    end
+
+    local function hookIncomingFor(remote)
+        if incomingConnections[remote] then return end
+        if remote:IsA("RemoteEvent") then
+            local path = getPathSafe(remote)
+            incomingConnections[remote] = remote.OnClientEvent:Connect(function(...)
+                addEntry("IN", path, "OnClientEvent", { ... })
+            end)
+        end
+    end
+
+    local function hookAllIncoming()
+        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then hookIncomingFor(obj) end
+        end
+        incomingConnections["__descendantAdded"] = ReplicatedStorage.DescendantAdded:Connect(function(obj)
+            if obj:IsA("RemoteEvent") then hookIncomingFor(obj) end
+        end)
+    end
+
+    local function unhookAllIncoming()
+        for _, conn in pairs(incomingConnections) do
+            if typeof(conn) == "RBXScriptConnection" then conn:Disconnect() end
+        end
+        incomingConnections = {}
+    end
+
+    local function enable()
+        if enabled then return end
+        local outgoingOk = hookOutgoing()
+        hookAllIncoming()
+        enabled = true
+        addLog("[SPY] Ativado" .. (outgoingOk and "" or " (só entrada -- executor não suporta hookmetamethod pra ver saída)"))
+        return outgoingOk
+    end
+
+    local function disable()
+        if not enabled then return end
+        unhookOutgoing()
+        unhookAllIncoming()
+        enabled = false
+        addLog("[SPY] Desativado")
+    end
+
+    local function clear()
+        entries = {}
+        if refreshUI then refreshUI() end
+    end
+
+    local function getLogText()
+        return table.concat(entries, "\n")
+    end
+
+    return {
+        enable = enable,
+        disable = disable,
+        clear = clear,
+        getLogText = getLogText,
+        isEnabled = function() return enabled end,
+        setRefreshCallback = function(fn) refreshUI = fn end,
+    }
+end
+
+local RemoteSpy = buildRemoteSpyFeature()
+
+-- ========================================
+-- FUNCTION SPY: em vez de reimplementar a lógica do checkpoint por conta
+-- própria (como fizemos no CheckpointDup, que não funcionou), isso aqui
+-- captura a FUNÇÃO REAL que o próprio jogo conectou no Touched de um
+-- checkpoint -- via getconnections(part.Touched), que devolve as
+-- conexões existentes com a referência pra função real (.Function).
+-- Assim dá pra chamar o EXATO mesmo código do jogo manualmente, com
+-- qualquer part que a gente quiser passar como "hit", sem ter que
+-- adivinhar a lógica interna dele. Precisa de getconnections com suporte
+-- a .Function -- Wave e a maioria dos executores completos têm.
+-- ========================================
+
+local function buildFunctionSpyFeature()
+    local capturedFn = nil
+    local capturedFrom = nil
+    local capturedKind = nil -- "touched" ou "remote" -- muda a assinatura de argumentos ao chamar
+
+    -- Monta um relatório de texto com tudo que dá pra descobrir sobre a
+    -- função capturada (via debug.getinfo -- source, linha, número de
+    -- upvalues/params, se é vararg) e copia pro clipboard, igual o
+    -- Remote Spy já faz com o log -- assim dá pra colar aqui na
+    -- conversa sem precisar copiar do console manualmente.
+    local function buildCaptureReport(checkpointName, fn)
+        local lines = {
+            "=== FUNCTION SPY: checkpoint '" .. tostring(checkpointName) .. "' ===",
+        }
+
+        local infoOk, info = pcall(debug.getinfo, fn)
+        if infoOk and info then
+            table.insert(lines, "source: " .. tostring(info.source))
+            table.insert(lines, "short_src: " .. tostring(info.short_src))
+            table.insert(lines, "linedefined: " .. tostring(info.linedefined))
+            table.insert(lines, "currentline: " .. tostring(info.currentline))
+            table.insert(lines, "what: " .. tostring(info.what))
+            table.insert(lines, "nparams: " .. tostring(info.nparams))
+            table.insert(lines, "is_vararg: " .. tostring(info.is_vararg))
+        else
+            table.insert(lines, "[!] debug.getinfo indisponível ou falhou")
+        end
+
+        if typeof(debug.getupvalues) == "function" then
+            local upOk, ups = pcall(debug.getupvalues, fn)
+            if upOk and ups then
+                table.insert(lines, "upvalues (" .. #ups .. "):")
+                for i, v in ipairs(ups) do
+                    table.insert(lines, "  [" .. i .. "] " .. typeof(v) .. " = " .. tostring(v))
+                end
+            end
+        end
+
+        if typeof(decompile) == "function" then
+            local decOk, source = pcall(decompile, fn)
+            if decOk and source then
+                table.insert(lines, "--- decompile ---")
+                table.insert(lines, tostring(source))
+            end
+        end
+
+        return table.concat(lines, "\n")
+    end
+
+    local function tryCaptureFromSignal(sourceName, signal, kind)
+        local ok, conns = pcall(getconnections, signal)
+        if not ok or not conns then return false end
+
+        for _, conn in ipairs(conns) do
+            local fn = conn.Function
+            if fn then
+                capturedFn = fn
+                capturedFrom = sourceName
+                capturedKind = kind
+
+                local report = buildCaptureReport(sourceName, fn)
+                print("[FN-SPY]\n" .. report)
+
+                if typeof(setclipboard) == "function" then
+                    local copied = pcall(setclipboard, report)
+                    addLog(copied
+                        and ("[FN-SPY] Função capturada de '" .. sourceName .. "' -- info copiada pro clipboard!")
+                        or ("[FN-SPY] Função capturada, mas setclipboard falhou -- veja no console"))
+                else
+                    addLog("[FN-SPY] Função capturada de '" .. sourceName .. "' -- esse executor não suporta setclipboard, veja no console")
+                end
+
+                return true
+            end
+        end
+
+        return false
+    end
+
+    -- O "Checkpoint UI: 48 x6000..." que aparece no console NÃO vem de
+    -- um Touched físico -- é o próprio sistema de sorte da rampa, guiado
+    -- 100% pelo remote CheckpointLuckUpdate (confirmado no Remote Spy:
+    -- só aparecem entradas [IN] pra ele, nunca Touched). Por isso captura
+    -- primeiro nos remotes que a gente sabe que disparam de verdade
+    -- (igual o SimpleSpy faz -- getconnections funciona em OnClientEvent
+    -- do mesmo jeito que em Touched), e só cai pro Touched dos
+    -- checkpoints como último recurso, caso o jogo mude de novo.
+    local function captureCheckpointTouched()
+        if typeof(getconnections) ~= "function" then
+            addLog("[FN-SPY] [!] getconnections não suportado nesse executor")
+            return false
+        end
+
+        local remoteCandidates = { "CheckpointLuckUpdate", "JumpLuckStart", "JumpLuckEnd" }
+        for _, name in ipairs(remoteCandidates) do
+            local remote = findRemote(name)
+            if remote then
+                if tryCaptureFromSignal(name .. ".OnClientEvent", remote.OnClientEvent, "remote") then
+                    return true
+                end
+            end
+        end
+
+        local folder = Workspace:FindFirstChild("Checkpoints", true)
+        if folder then
+            for _, child in ipairs(folder:GetChildren()) do
+                local part = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
+                if part then
+                    if tryCaptureFromSignal(child.Name .. ".Touched", part.Touched, "touched") then
+                        return true
+                    end
+                end
+            end
+        end
+
+        addLog("[FN-SPY] [!] Nenhuma conexão encontrada (nem nos remotes de sorte, nem nos checkpoints Touched)")
+        return false
+    end
+
+    -- A função capturada de um REMOTE (OnClientEvent) recebe os MESMOS
+    -- argumentos que o servidor mandou no evento -- pra CheckpointLuckUpdate
+    -- isso é (isJackpot: boolean, luckValue: number, ...), NUNCA uma part
+    -- de Touched. Passar o carro como argumento aqui é o que causava
+    -- "invalid argument #2 to 'max' (number expected, got Instance)".
+    -- Chamamos manualmente com um valor de sorte gigante só pra ver o que
+    -- essa função faz com ele (ex: se só atualiza um LuckValue LOCAL/visual,
+    -- ou se dispara algo mais) -- é 100% client-side, não manda nada pro
+    -- servidor por conta própria (quem manda pro servidor é outro remote).
+    local function callCapturedWithCar()
+        if not capturedFn then
+            addLog("[FN-SPY] [!] Capture a função primeiro")
+            return
+        end
+
+        local ok, err
+        if capturedKind == "remote" then
+            -- Primeira tentativa (isJackpot=true, luckValue=numero) deu
+            -- "argument #2 to 'max' (number expected, got boolean)" -- ou
+            -- seja o 2º parâmetro TAMBÉM precisa ser número. O formato do
+            -- print do próprio jogo ("Checkpoint UI: 48 x6000") sugere que
+            -- a assinatura real é (index: number, luckValue: number).
+            local testIndex, testValue = 1, 999999999
+            ok, err = pcall(capturedFn, testIndex, testValue)
+            addLog("[FN-SPY] Chamando função de remote com (index=" .. testIndex .. ", luckValue=" .. testValue .. ") -- teste 100% local, não afeta o servidor")
+        else
+            local car = findPlayerCarModel()
+            local hitPart = car and (car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true))
+            if not hitPart then
+                addLog("[FN-SPY] [!] Carro não encontrado -- entre no carro primeiro")
+                return
+            end
+            ok, err = pcall(capturedFn, hitPart)
+        end
+
+        local resultText = ok
+            and ("=== FUNCTION SPY: chamada de '" .. tostring(capturedFrom) .. "' ===\nSucesso -- sem erro retornado.")
+            or ("=== FUNCTION SPY: chamada de '" .. tostring(capturedFrom) .. "' ===\nErro: " .. tostring(err))
+
+        print("[FN-SPY]\n" .. resultText)
+
+        if typeof(setclipboard) == "function" then
+            local copied = pcall(setclipboard, resultText)
+            addLog((ok and "[FN-SPY] [✓] Função real chamada com sucesso" or "[FN-SPY] [!] Erro ao chamar a função real: " .. tostring(err))
+                .. (copied and " -- resultado copiado pro clipboard!" or " -- setclipboard falhou, veja no console"))
+        else
+            addLog(ok and "[FN-SPY] [✓] Função real chamada com sucesso (executor sem setclipboard, veja no console)"
+                or "[FN-SPY] [!] Erro ao chamar a função real: " .. tostring(err))
+        end
+    end
+
+    return {
+        capture = captureCheckpointTouched,
+        callWithCar = callCapturedWithCar,
+        hasCaptured = function() return capturedFn ~= nil end,
+    }
+end
+
+local FunctionSpy = buildFunctionSpyFeature()
+
+-- ========================================
 -- PROPS LOCAIS: spawnar/clonar/grudar/segurar objetos onde você olha --
 -- 100% client-side (LocalScript não tem canal de rede pra replicar
 -- Instance criada por ele pra outros clients nem pro servidor), então só
@@ -2211,11 +3011,163 @@ local function applyTimeOfDay()
     Lighting.ClockTime = timeOfDayConfig.clockTime
 end
 
-Lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+-- Antes isso escutava GetPropertyChangedSignal("ClockTime") e reescrevia
+-- o valor de dentro do próprio handler -- se o jogo também tem um ciclo
+-- dia/noite rodando no servidor, isso vira um vaivém (nosso handler
+-- dispara o evento de novo, que dispara o handler de novo...) que o
+-- Roblox corta sozinho com "Exponential deferred event growth detected".
+-- Um polling simples no Heartbeat evita esse loop de evento-dentro-de-
+-- evento por completo.
+RunService.Heartbeat:Connect(function()
     if timeOfDayConfig.enabled and math.abs(Lighting.ClockTime - timeOfDayConfig.clockTime) > 0.05 then
         applyTimeOfDay()
     end
 end)
+
+-- ========================================
+-- CLIMA: o jogo não tem sistema de clima nenhum (sem chuva/tempestade/
+-- neblina/neve -- conferido, não existe nada assim no código), então
+-- isso aqui é construído do zero, 100% local (só na sua tela, ninguém
+-- mais vê) -- Atmosphere pra neblina/densidade, ParticleEmitter presa
+-- numa part que segue a câmera pra chuva/neve/areia, e um flash de
+-- PointLight + som pra trovão na tempestade.
+-- ========================================
+
+local function buildWeatherFeature()
+    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+    if not atmosphere then
+        atmosphere = Instance.new("Atmosphere")
+        atmosphere.Parent = Lighting
+    end
+    local defaultAtmosphere = {
+        Density = atmosphere.Density,
+        Offset = atmosphere.Offset,
+        Color = atmosphere.Color,
+        Decay = atmosphere.Decay,
+        Glare = atmosphere.Glare,
+        Haze = atmosphere.Haze,
+    }
+
+    local followPart = Instance.new("Part")
+    followPart.Name = "HubWeatherFollow"
+    followPart.Anchored = true
+    followPart.CanCollide = false
+    followPart.CanTouch = false
+    followPart.CanQuery = false
+    followPart.Transparency = 1
+    followPart.Size = Vector3.new(1, 1, 1)
+    followPart.Parent = Workspace
+
+    local emitter = Instance.new("ParticleEmitter")
+    emitter.Name = "HubWeatherEmitter"
+    emitter.Enabled = false
+    emitter.Rate = 0
+    emitter.Parent = followPart
+
+    local followConn = RunService.RenderStepped:Connect(function()
+        local camera = Workspace.CurrentCamera
+        followPart.CFrame = camera.CFrame + camera.CFrame.LookVector * 40 + Vector3.new(0, 25, 0)
+    end)
+
+    local currentPreset = "clear"
+
+    local function stopThunder()
+        -- o loop de trovão checa `currentPreset == "storm"` a cada
+        -- iteração e se auto-encerra quando o preset muda, então só
+        -- precisamos garantir que currentPreset já não seja mais "storm"
+        -- antes de chamar isso (feito em applyPreset logo no início).
+    end
+
+    local function flashThunder()
+        local camera = Workspace.CurrentCamera
+        local flash = Instance.new("ColorCorrectionEffect")
+        flash.Name = "HubThunderFlash"
+        flash.Brightness = 0.6
+        flash.Parent = Lighting
+
+        local sound = Instance.new("Sound")
+        sound.SoundId = "rbxasset://sounds/impact_water.mp3"
+        sound.Volume = 0.6
+        sound.Parent = camera
+        pcall(function() sound:Play() end)
+
+        task.delay(0.15, function()
+            if flash.Parent then flash:Destroy() end
+        end)
+        task.delay(3, function()
+            if sound.Parent then sound:Destroy() end
+        end)
+    end
+
+    local function configureEmitter(shape, color, size, speed, rate, lifetime, rotSpeed)
+        emitter.Texture = shape
+        emitter.Color = ColorSequence.new(color)
+        emitter.Size = NumberSequence.new(size)
+        emitter.Speed = NumberRange.new(speed[1], speed[2])
+        emitter.Rate = rate
+        emitter.Lifetime = NumberRange.new(lifetime[1], lifetime[2])
+        emitter.RotSpeed = NumberRange.new(rotSpeed[1], rotSpeed[2])
+        emitter.SpreadAngle = Vector2.new(60, 60)
+        emitter.Enabled = true
+    end
+
+    local function applyPreset(name, statusLabel)
+        currentPreset = name
+        stopThunder()
+        emitter.Enabled = false
+
+        if name == "clear" then
+            atmosphere.Density = defaultAtmosphere.Density
+            atmosphere.Offset = defaultAtmosphere.Offset
+            atmosphere.Color = defaultAtmosphere.Color
+            atmosphere.Decay = defaultAtmosphere.Decay
+            atmosphere.Glare = defaultAtmosphere.Glare
+            atmosphere.Haze = defaultAtmosphere.Haze
+        elseif name == "rain" then
+            atmosphere.Density = 0.35
+            atmosphere.Haze = 1.5
+            atmosphere.Color = Color3.fromRGB(150, 160, 170)
+            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(200, 210, 230), 1.2, { 60, 80 }, 300, { 0.6, 0.9 }, { 0, 0 })
+        elseif name == "storm" then
+            atmosphere.Density = 0.55
+            atmosphere.Haze = 3
+            atmosphere.Color = Color3.fromRGB(90, 95, 110)
+            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(180, 190, 210), 1.6, { 90, 120 }, 600, { 0.4, 0.7 }, { 0, 0 })
+            task.spawn(function()
+                while currentPreset == "storm" do
+                    task.wait(math.random(4, 10))
+                    if currentPreset == "storm" then flashThunder() end
+                end
+            end)
+        elseif name == "fog" then
+            atmosphere.Density = 0.7
+            atmosphere.Offset = 0.1
+            atmosphere.Haze = 4
+            atmosphere.Color = Color3.fromRGB(200, 200, 205)
+        elseif name == "snow" then
+            atmosphere.Density = 0.3
+            atmosphere.Haze = 1
+            atmosphere.Color = Color3.fromRGB(210, 220, 235)
+            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(255, 255, 255), 2, { 8, 15 }, 150, { 3, 5 }, { -30, 30 })
+        elseif name == "sandstorm" then
+            atmosphere.Density = 0.6
+            atmosphere.Haze = 3.5
+            atmosphere.Color = Color3.fromRGB(190, 150, 90)
+            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(200, 165, 100), 4, { 40, 70 }, 200, { 1, 2 }, { -10, 10 })
+        end
+
+        if statusLabel then
+            statusLabel.Text = "Status: " .. name:upper()
+        end
+        addLog("[CLIMA] Aplicado: " .. name)
+    end
+
+    return {
+        applyPreset = applyPreset,
+    }
+end
+
+local Weather = buildWeatherFeature()
 
 -- ========================================
 -- ANIMAÇÕES CUSTOM: edita os IDs de idle/andar/correr DENTRO do script
@@ -2484,6 +3436,7 @@ local TAB_DEFS = {
     { key = "webhook", labelKey = "tab_webhook" },
     { key = "players", labelKey = "tab_players" },
     { key = "slimes", labelKey = "tab_slimes" },
+    { key = "spy", labelKey = "tab_spy" },
     { key = "settings", labelKey = "tab_settings" },
 }
 
@@ -2897,6 +3850,65 @@ carStatusLabel = addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 
 
 addInfoLabel(carTab, "Com o impulso ATIVADO, segurar SHIFT empurra o carro pra frente com força extra a cada instante -- solta e para na hora, sem esperar desacelerar. Só funciona enquanto você está dentro do carro na pista. Ajuste a força se sentir fraco ou forte demais.")
 
+addDivider(carTab)
+addSectionLabel(carTab, t("sec_fly"), Color3.fromRGB(0, 220, 220))
+
+local flyToggleBtn = Instance.new("TextButton")
+flyToggleBtn.Size = UDim2.new(1, 0, 0, 30)
+flyToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+flyToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+flyToggleBtn.TextSize = 12
+flyToggleBtn.Font = Enum.Font.GothamBold
+flyToggleBtn.Text = t("btn_fly_toggle")
+flyToggleBtn.LayoutOrder = tabOrder(carTab)
+flyToggleBtn.Parent = carTab
+flyToggleBtn.MouseButton1Click:Connect(function()
+    CarFly.toggle()
+    flyToggleBtn.BackgroundColor3 = CarFly.config.active and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
+end)
+
+CarFly.setStatusLabel(addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100)))
+
+addInfoLabel(carTab, "Desliga a colisão do carro inteiro e deixa você voar com ele (com você sentado dentro) usando WASD/Space/Ctrl relativo à câmera, igual o Free Cam -- Shift acelera. Precisa estar dentro do carro. Desativar devolve a colisão normal.")
+
+addDivider(carTab)
+addSectionLabel(carTab, t("sec_checkpoint_dup"), Color3.fromRGB(255, 140, 60))
+
+local offsetZInput = addTextField(carTab, t("lbl_offset_z"), "10")
+local dupCheckpointsBtn, clearDupCheckpointsBtn = addTwoButtons(carTab, t("btn_dup_checkpoints"), Color3.fromRGB(0, 150, 100), t("btn_clear_dup_checkpoints"), Color3.fromRGB(150, 0, 0))
+dupCheckpointsBtn.MouseButton1Click:Connect(function()
+    local offset = tonumber(offsetZInput.Text) or 10
+    CheckpointDup.duplicateAll(offset)
+end)
+clearDupCheckpointsBtn.MouseButton1Click:Connect(function()
+    CheckpointDup.clearAll()
+end)
+
+addInfoLabel(carTab, "Clona cada checkpoint da pasta Checkpoints com um deslocamento em Z e conecta um Touched próprio pra disparar o mesmo remote do jogo -- assim, passando pela pista duas vezes (original + cópia, com mais de 1s de intervalo) dispara o checkpoint de novo. Remover Duplicados apaga só as cópias criadas por aqui, sem mexer nos checkpoints originais do jogo.")
+
+addDivider(carTab)
+addSectionLabel(carTab, t("sec_checkpoint_extra"), Color3.fromRGB(255, 100, 220))
+
+local extraCountInput = addTextField(carTab, t("lbl_extra_count"), "5")
+local extraSpacingInput = addTextField(carTab, t("lbl_extra_spacing"), "15")
+local createExtraBtn, autoTriggerExtraBtn = addTwoButtons(carTab, t("btn_create_extra"), Color3.fromRGB(150, 0, 150), t("btn_auto_trigger_extra"), Color3.fromRGB(0, 130, 150))
+
+local lastCreatedCheckpoints = {}
+createExtraBtn.MouseButton1Click:Connect(function()
+    local count = math.clamp(tonumber(extraCountInput.Text) or 5, 1, 200)
+    local spacing = tonumber(extraSpacingInput.Text) or 15
+    lastCreatedCheckpoints = CheckpointDup.createBeyondMax(count, spacing)
+end)
+autoTriggerExtraBtn.MouseButton1Click:Connect(function()
+    if #lastCreatedCheckpoints == 0 then
+        addLog("[CHECKPOINT-DUP] [!] Crie os checkpoints extras antes de disparar")
+        return
+    end
+    CheckpointDup.autoTriggerCreated(lastCreatedCheckpoints, 1.2)
+end)
+
+addInfoLabel(carTab, "Clona o checkpoint de maior número existente e cria N novos checkpoints em sequência (máximo+1, máximo+2, ...), já ligados no mesmo remote do jogo. Como o servidor só parece premiar quando o número sobe, isso testa se dá pra continuar ganhando além do checkpoint final da pista. Disparar Automaticamente teleporta seu personagem até cada um, esperando mais de 1s entre eles.")
+
 -- --- ABA PROPS (LOCAL, SÓ PRA VOCÊ) ---
 
 local propsTab = tabFrames.props
@@ -3005,6 +4017,24 @@ dawnBtn.MouseButton1Click:Connect(function() setTimePreset(6) end)
 dayBtn.MouseButton1Click:Connect(function() setTimePreset(12) end)
 duskBtn.MouseButton1Click:Connect(function() setTimePreset(18) end)
 nightBtn.MouseButton1Click:Connect(function() setTimePreset(0) end)
+
+addDivider(propsTab)
+addSectionLabel(propsTab, t("sec_weather"), Color3.fromRGB(120, 200, 255))
+
+local weatherStatusLabel = addFullLabel(propsTab, "Status: CLEAR", Color3.fromRGB(100, 200, 100))
+
+local weatherClearBtn, weatherRainBtn = addTwoButtons(propsTab, t("btn_weather_clear"), Color3.fromRGB(60, 60, 60), t("btn_weather_rain"), Color3.fromRGB(0, 110, 180))
+local weatherStormBtn, weatherFogBtn = addTwoButtons(propsTab, t("btn_weather_storm"), Color3.fromRGB(70, 70, 90), t("btn_weather_fog"), Color3.fromRGB(140, 140, 145))
+local weatherSnowBtn, weatherSandBtn = addTwoButtons(propsTab, t("btn_weather_snow"), Color3.fromRGB(150, 180, 220), t("btn_weather_sandstorm"), Color3.fromRGB(180, 140, 80))
+
+weatherClearBtn.MouseButton1Click:Connect(function() Weather.applyPreset("clear", weatherStatusLabel) end)
+weatherRainBtn.MouseButton1Click:Connect(function() Weather.applyPreset("rain", weatherStatusLabel) end)
+weatherStormBtn.MouseButton1Click:Connect(function() Weather.applyPreset("storm", weatherStatusLabel) end)
+weatherFogBtn.MouseButton1Click:Connect(function() Weather.applyPreset("fog", weatherStatusLabel) end)
+weatherSnowBtn.MouseButton1Click:Connect(function() Weather.applyPreset("snow", weatherStatusLabel) end)
+weatherSandBtn.MouseButton1Click:Connect(function() Weather.applyPreset("sandstorm", weatherStatusLabel) end)
+
+addInfoLabel(propsTab, "O jogo não tem clima nenhum de verdade (sem chuva/neve/neblina no código) -- isso aqui é construído do zero, 100% visual e só na SUA tela: Atmosphere pra névoa/densidade, partículas presas numa part que segue sua câmera pra chuva/neve/areia, e na Tempestade ainda entra um flash + som de trovão de vez em quando. Limpo volta tudo ao normal.")
 
 -- --- ABA ESP ---
 
@@ -3362,6 +4392,91 @@ giftSendBtn.MouseButton1Click:Connect(function()
     sendGiftByIndex(target, math.floor(idx))
 end)
 addInfoLabel(slimesTab, "GiftAction:FireServer(\"RequestGift\", jogador, índice) é o MESMO remote que o prompt \"Gift Slime\" dispara ao lado de outro jogador -- pode ser que o servidor exija estar fisicamente perto do prompt dele antes de aceitar; se não funcionar de longe, é o servidor validando distância (bom sinal de segurança).")
+
+-- --- ABA REMOTE SPY ---
+
+local spyTab = tabFrames.spy
+addSectionLabel(spyTab, t("sec_remote_spy"), Color3.fromRGB(255, 90, 90))
+
+local spyToggleBtn = Instance.new("TextButton")
+spyToggleBtn.Size = UDim2.new(1, 0, 0, 30)
+spyToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+spyToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+spyToggleBtn.TextSize = 12
+spyToggleBtn.Font = Enum.Font.GothamBold
+spyToggleBtn.Text = t("btn_spy_enable")
+spyToggleBtn.LayoutOrder = tabOrder(spyTab)
+spyToggleBtn.Parent = spyTab
+spyToggleBtn.MouseButton1Click:Connect(function()
+    if RemoteSpy.isEnabled() then
+        RemoteSpy.disable()
+        spyToggleBtn.Text = t("btn_spy_enable")
+        spyToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    else
+        local outgoingOk = RemoteSpy.enable()
+        spyToggleBtn.Text = t("btn_spy_disable")
+        spyToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
+        if not outgoingOk then
+            addLog("[SPY] [!] hookmetamethod indisponível nesse executor -- só logs de entrada (OnClientEvent) vão aparecer")
+        end
+    end
+end)
+
+local spyCopyBtn, spyClearBtn = addTwoButtons(spyTab, t("btn_spy_copy"), Color3.fromRGB(90, 90, 200), t("btn_spy_clear"), Color3.fromRGB(150, 0, 0))
+spyCopyBtn.MouseButton1Click:Connect(function()
+    local text = RemoteSpy.getLogText()
+    if typeof(setclipboard) == "function" then
+        local ok = pcall(setclipboard, text)
+        addLog(ok and "[SPY] Log copiado pro clipboard!" or "[SPY] [!] setclipboard falhou -- veja no console")
+    else
+        addLog("[SPY] [!] Esse executor não suporta setclipboard -- veja no console mesmo")
+    end
+end)
+spyClearBtn.MouseButton1Click:Connect(function()
+    RemoteSpy.clear()
+end)
+
+addInfoLabel(spyTab, "OUT = o que SAI do seu client pro servidor (FireServer/InvokeServer) -- inclui chamadas feitas pelo PRÓPRIO JOGO, não só as do hub. IN = o que o servidor manda de volta (OnClientEvent). Mostra as últimas 200 linhas; o log completo também vai pro console (F9). Precisa de hookmetamethod pra ver o OUT -- se o executor não suportar, só o IN aparece (ainda útil pra ver o formato dos dados que o jogo recebe).")
+
+local spyLogLabel = Instance.new("TextLabel")
+spyLogLabel.Size = UDim2.new(1, 0, 0, 0)
+spyLogLabel.AutomaticSize = Enum.AutomaticSize.Y
+spyLogLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+spyLogLabel.TextColor3 = Color3.fromRGB(0, 230, 120)
+spyLogLabel.TextSize = 9
+spyLogLabel.Font = Enum.Font.Code
+spyLogLabel.TextWrapped = true
+spyLogLabel.TextXAlignment = Enum.TextXAlignment.Left
+spyLogLabel.TextYAlignment = Enum.TextYAlignment.Top
+spyLogLabel.Text = ""
+spyLogLabel.LayoutOrder = tabOrder(spyTab)
+spyLogLabel.Parent = spyTab
+
+local spyPadding = Instance.new("UIPadding")
+spyPadding.PaddingLeft = UDim.new(0, 6)
+spyPadding.PaddingRight = UDim.new(0, 6)
+spyPadding.PaddingTop = UDim.new(0, 6)
+spyPadding.PaddingBottom = UDim.new(0, 6)
+spyPadding.Parent = spyLogLabel
+
+RemoteSpy.setRefreshCallback(function()
+    local text = RemoteSpy.getLogText()
+    spyLogLabel.Text = (text ~= "" and text) or "(vazio -- ative o Spy e vá jogar normalmente pra ver as chamadas aparecerem aqui)"
+end)
+spyLogLabel.Text = "(vazio -- ative o Spy e vá jogar normalmente pra ver as chamadas aparecerem aqui)"
+
+addDivider(spyTab)
+addSectionLabel(spyTab, t("sec_function_spy"), Color3.fromRGB(255, 180, 60))
+
+local captureFnBtn, callFnBtn = addTwoButtons(spyTab, t("btn_capture_fn"), Color3.fromRGB(150, 100, 0), t("btn_call_fn"), Color3.fromRGB(0, 130, 150))
+captureFnBtn.MouseButton1Click:Connect(function()
+    FunctionSpy.capture()
+end)
+callFnBtn.MouseButton1Click:Connect(function()
+    FunctionSpy.callWithCar()
+end)
+
+addInfoLabel(spyTab, "O 'Checkpoint UI: 48 x6000...' que aparece no console não vem de um Touched físico -- é o sistema de sorte da rampa, guiado 100% pelo remote CheckpointLuckUpdate. Por isso Capturar tenta primeiro getconnections nesse remote (e em JumpLuckStart/JumpLuckEnd), igual o SimpleSpy faz, e só cai pro Touched dos checkpoints antigos como último recurso. Captura a função REAL do jogo (sem reimplementar nada) e copia um relatório completo pro clipboard. Se capturou de um remote, essa função recebe (isJackpot, luckValue) do SERVIDOR -- Chamar testa ela com um valor gigante só pra ver o que ela faz LOCALMENTE (não manda nada pro servidor por conta própria); se veio de um Touched, chama passando o carro. Resultado sempre vai pro clipboard.")
 
 -- --- ABA CONFIGURACOES ---
 
