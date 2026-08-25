@@ -1,3 +1,10 @@
+-- ========================================
+-- MEGA RAMP HUB - painel único com abas (Ramp / Games / Cam / Webhook /
+-- Jogadores), responsivo (celular e PC), com botão de minimizar.
+-- Junta megaramp_event_loop.lua + minigames_farm.lua + freecam.lua num só
+-- script, mais notificação por Discord Webhook e spectate de jogadores.
+-- ========================================
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,6 +21,15 @@ print("=== MEGA RAMP HUB ===")
 local function addLog(msg)
     print("[HUB] " .. msg)
 end
+
+-- ========================================
+-- IDIOMA: só traduz nomes de abas e os botões/textos mais comuns
+-- (Iniciar/Parar/Ativar/Desativar etc). Textos longos de explicação e as
+-- mensagens de log continuam em português. Trocar o idioma na aba
+-- Configurações só aplica de verdade na PRÓXIMA vez que o hub carregar
+-- (rode o script de novo) -- os botões já criados não se retraduzem
+-- sozinhos ao vivo.
+-- ========================================
 
 local Language = { current = "pt" }
 
@@ -930,17 +946,6 @@ local rampConfig = {
     carSpawnWait = 0.6,
 }
 
-local checkpointSlots = { { x = 41.4, y = 11.0, z = 3267.2, enabled = true } }
-
-local function pickRandomCheckpoint()
-    local enabledSlots = {}
-    for _, slot in ipairs(checkpointSlots) do
-        if slot.enabled then table.insert(enabledSlots, slot) end
-    end
-    if #enabledSlots == 0 then return nil end
-    return enabledSlots[math.random(1, #enabledSlots)]
-end
-
 local function findJumpCarPart()
     local direct = Workspace:FindFirstChild("JumpCar", true)
     if direct and direct:IsA("BasePart") then return direct end
@@ -1015,47 +1020,6 @@ local function moveCarTo(car, carPart, position)
             carPart.CFrame = targetCFrame
         end
     end)
-end
-
-local function teleportToCheckpoint()
-    local slot = pickRandomCheckpoint()
-    if not slot then
-        addLog("[RAMP] [!] Nenhum checkpoint ativado")
-        return false
-    end
-
-    local car = findPlayerCarModel()
-    if not car then
-        addLog("[RAMP] [!] Model do carro não encontrado (checkpoint)")
-        return false
-    end
-
-    local carPart = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
-    if not carPart then
-        addLog("[RAMP] [!] Nenhuma BasePart no carro (checkpoint)")
-        return false
-    end
-
-    local highPosition = Vector3.new(slot.x, slot.y + rampConfig.checkpointYOffset, slot.z)
-    local ok1 = moveCarTo(car, carPart, highPosition)
-    if not ok1 then
-        addLog("[RAMP] [!] Erro no teleporte intermediário")
-        return false
-    end
-
-    task.wait(rampConfig.intermediateWait)
-    if not rampConfig.running then return false end
-
-    local finalPosition = Vector3.new(slot.x, slot.y, slot.z)
-    local ok2 = moveCarTo(car, carPart, finalPosition)
-
-    if ok2 then
-        addLog("[RAMP] [✓] Teleportado pro checkpoint")
-        return true
-    else
-        addLog("[RAMP] [!] Erro ao teleportar pro checkpoint final")
-        return false
-    end
 end
 
 local function clickOpenBoxMultiple()
@@ -1153,7 +1117,12 @@ local function runTeleportLoopForDuration(durationSeconds)
             local launchData = waitForLaunchArgs(5)
 
             if launchData then
-                teleportToCheckpoint()
+                -- Antigamente teleportava o carro pro checkpoint fixo
+                -- (checkpointSlots) depois do pulo -- mas agora que o
+                -- Mega Jump Insta já colapsa o Checkpoint 92 pra cima do
+                -- CarSpawn/JumpCar, o carro já pousa em cima dele
+                -- sozinho, então esse teleporte forçado não faz mais
+                -- sentido (mandava o carro pra longe, pro lugar antigo).
                 waitForEvent(startBoxRevealRemote, 8)
                 -- Os cliques em si são disparados pelo listener global
                 -- autoClickOpenBoxNow (StartBoxReveal.OnClientEvent), que
@@ -2447,12 +2416,11 @@ local function buildMegaJumpInstaFeature()
     -- de altura. Além de mover, também zeramos qualquer Attribute de
     -- força/impulso do JumpCar (nomes tipo Force/Power/Impulse/Speed),
     -- restaurando os valores originais no Restaurar.
-    -- LandingZone3 (mais baixa, valor atualizado): -8.181, 133.341, -1398.538
-    -- -> offset (-8.073, +7.362, +165.282)
+    -- LandingZone3: -8.181, 186.895, -1398.538 -> offset (-8.073, +60.916, +165.282)
     -- Checkpoint 92 (novo valor): -0.021, 216, -1541.379 -> offset (+0.087, +90.021, +22.441)
     local JUMP_CAR_OFFSET = Vector3.new(0.108, 17.328, 24.243)
     local CHECKPOINT92_OFFSET = Vector3.new(0.087, 90.021, 22.441)
-    local LANDING_ZONE_OFFSET = Vector3.new(-8.073, 7.362, 165.282)
+    local LANDING_ZONE_OFFSET = Vector3.new(-8.073, 60.916, 165.282)
     local FORCE_ATTRIBUTE_KEYWORDS = { "force", "power", "impulse", "speed", "launch", "jump" }
     -- Checkpoint 92 é minúsculo perto do JumpCar/CarSpawn -- quando tudo
     -- colapsa pro mesmo ponto, o carro acaba pousando fora da área de
@@ -3995,60 +3963,6 @@ addSectionLabel(rampTab, t("sec_ramp_cycle"), Color3.fromRGB(255, 140, 60))
 local rampStartBtn, rampStopBtn = addTwoButtons(rampTab, t("start"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
 local toggleAlertBtn = addButton(rampTab, t("btn_alert_rainbow"), Color3.fromRGB(150, 100, 0), 30)
 local sellAllBtn = addButton(rampTab, t("btn_sell_all"), Color3.fromRGB(0, 150, 100), 34)
-
-addSectionLabel(rampTab, t("lbl_checkpoint"), Color3.fromRGB(200, 200, 200))
-local checkpointContainer = Instance.new("Frame")
-checkpointContainer.Size = UDim2.new(1, 0, 0, 30)
-checkpointContainer.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-checkpointContainer.BorderSizePixel = 1
-checkpointContainer.BorderColor3 = Color3.fromRGB(100, 100, 100)
-checkpointContainer.LayoutOrder = tabOrder(rampTab)
-checkpointContainer.Parent = rampTab
-
-do
-    local slot = checkpointSlots[1]
-    local yPos = 3
-
-    local toggle = Instance.new("TextButton")
-    toggle.Size = UDim2.new(0, 24, 0, 24)
-    toggle.Position = UDim2.new(0, 3, 0, yPos)
-    toggle.BackgroundColor3 = slot.enabled and Color3.fromRGB(255, 85, 0) or Color3.fromRGB(60, 60, 60)
-    toggle.TextColor3 = Color3.new(1, 1, 1)
-    toggle.TextSize = 12
-    toggle.Font = Enum.Font.GothamBold
-    toggle.Text = slot.enabled and "✓" or ""
-    toggle.Parent = checkpointContainer
-
-    local function makeInput(field, xPos, width)
-        local box = Instance.new("TextBox")
-        box.Size = UDim2.new(0, width, 0, 24)
-        box.Position = UDim2.new(0, xPos, 0, yPos)
-        box.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        box.TextColor3 = Color3.new(1, 1, 1)
-        box.TextSize = 11
-        box.Font = Enum.Font.Gotham
-        box.Text = tostring(slot[field])
-        box.PlaceholderText = field:upper()
-        box.ClearTextOnFocus = false
-        box.Parent = checkpointContainer
-
-        box.FocusLost:Connect(function()
-            local val = tonumber(box.Text)
-            if val then slot[field] = val end
-        end)
-        return box
-    end
-
-    makeInput("x", 32, 78)
-    makeInput("y", 114, 78)
-    makeInput("z", 196, 90)
-
-    toggle.MouseButton1Click:Connect(function()
-        slot.enabled = not slot.enabled
-        toggle.BackgroundColor3 = slot.enabled and Color3.fromRGB(255, 85, 0) or Color3.fromRGB(60, 60, 60)
-        toggle.Text = slot.enabled and "✓" or ""
-    end)
-end
 
 rampStatusLabel = addFullLabel(rampTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
 rampCountLabel = addFullLabel(rampTab, t("label_teleports_forced") .. "0", Color3.fromRGB(200, 200, 255))
