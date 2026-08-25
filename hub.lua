@@ -1,10 +1,3 @@
--- ========================================
--- MEGA RAMP HUB - painel único com abas (Ramp / Games / Cam / Webhook /
--- Jogadores), responsivo (celular e PC), com botão de minimizar.
--- Junta megaramp_event_loop.lua + minigames_farm.lua + freecam.lua num só
--- script, mais notificação por Discord Webhook e spectate de jogadores.
--- ========================================
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,15 +14,6 @@ print("=== MEGA RAMP HUB ===")
 local function addLog(msg)
     print("[HUB] " .. msg)
 end
-
--- ========================================
--- IDIOMA: só traduz nomes de abas e os botões/textos mais comuns
--- (Iniciar/Parar/Ativar/Desativar etc). Textos longos de explicação e as
--- mensagens de log continuam em português. Trocar o idioma na aba
--- Configurações só aplica de verdade na PRÓXIMA vez que o hub carregar
--- (rode o script de novo) -- os botões já criados não se retraduzem
--- sozinhos ao vivo.
--- ========================================
 
 local Language = { current = "pt" }
 
@@ -746,7 +730,40 @@ local function findEventShopPrompt()
     return nil
 end
 
-local function activateMostExpensiveEvent()
+-- Move o painel FÍSICO do MiniGame1Button (o mesmo trigger usado tanto
+-- pela Memória quanto pelo Bata o Slime) pra cima do EventShopPrompt --
+-- isso é 100% client-side (só a SUA tela vê ele nessa posição nova), mas
+-- como o Roblox checa a distância do ProximityPrompt usando a posição
+-- RENDERIZADA no seu client (é por isso que o prompt "E" aparece/some
+-- sozinho conforme você anda), mover a Part localmente é o suficiente
+-- pra conseguir disparar o prompt sem precisar sair do lugar. Só roda
+-- 1x no carregamento do hub (o painel não se move sozinho no jogo).
+local function moveMiniGameButtonToEventShop()
+    local prompt = findEventShopPrompt()
+    if not prompt then
+        addLog("[MINIGAME] [!] EventShopPrompt não encontrado, não deu pra mover o painel de minigames")
+        return
+    end
+    local shopPos = getPromptWorldPosition(prompt)
+    if not shopPos then
+        addLog("[MINIGAME] [!] Não consegui ler a posição do EventShopPrompt")
+        return
+    end
+
+    local part = miniGameButton:IsA("BasePart") and miniGameButton or miniGameButton:FindFirstChildWhichIsA("BasePart", true)
+    if not part then
+        addLog("[MINIGAME] [!] MiniGame1Button não tem nenhuma BasePart pra mover")
+        return
+    end
+
+    local currentRotation = part.CFrame - part.CFrame.Position
+    part.CFrame = CFrame.new(shopPos) * currentRotation
+    addLog("[MINIGAME] [✓] Painel de minigames movido pra cima do shop de eventos (só na sua tela)")
+end
+
+task.defer(moveMiniGameButtonToEventShop)
+
+local function activateMostExpensiveEvent(stayAtShop, noTeleport)
     if not eventShopActionRemote then
         addLog("[EVENTO] [!] EventShopAction não encontrado")
         return false
@@ -765,13 +782,15 @@ local function activateMostExpensiveEvent()
         pcall(function() selectInventoryItemRemote:FireServer(0) end)
     end
 
-    local prompt = findEventShopPrompt()
     local originalCFrame = nil
-    if prompt then
-        local promptPos = getPromptWorldPosition(prompt)
-        if promptPos then
-            originalCFrame = teleportPlayerTo(promptPos)
-            task.wait(0.2)
+    if not noTeleport then
+        local prompt = findEventShopPrompt()
+        if prompt then
+            local promptPos = getPromptWorldPosition(prompt)
+            if promptPos then
+                originalCFrame = teleportPlayerTo(promptPos)
+                task.wait(0.2)
+            end
         end
     end
 
@@ -799,7 +818,9 @@ local function activateMostExpensiveEvent()
         addLog("[EVENTO] [!] Não confirmei a ativação")
     end
 
-    teleportPlayerBack(originalCFrame)
+    if not stayAtShop then
+        teleportPlayerBack(originalCFrame)
+    end
     return confirmed
 end
 
@@ -891,6 +912,13 @@ end
 -- ========================================
 
 local rampStatusLabel, rampCountLabel, rampCycleLabel
+-- Forward-declarado aqui (definido de verdade lá embaixo, perto do
+-- CheckpointDup) porque startMasterCycle/stopMasterCycle -- definidos
+-- logo abaixo, nesta mesma aba -- precisam chamar MegaJumpInsta.enable/
+-- disable, e uma função só enxerga uma local como upvalue se ela já
+-- tiver sido declarada (com `local`) ANTES do texto da função -- mesmo
+-- que a atribuição de valor só aconteça depois.
+local MegaJumpInsta
 
 local rampConfig = {
     running = false,
@@ -1150,6 +1178,15 @@ local function startMasterCycle()
     end
     addLog("[RAMP] === CICLO AUTOMÁTICO INICIADO ===")
 
+    -- Mega Jump Insta liga junto com o ciclo (CarSpawn/JumpCar/Checkpoint
+    -- 92 colapsados na posição do CarSpawn) e desliga sozinho quando o
+    -- ciclo para -- inclusive na pausa automática por outro jogador, já
+    -- que ela chama esse mesmo startMasterCycle/stopMasterCycle.
+    if MegaJumpInsta and not MegaJumpInsta.isEnabled() then
+        local pos = MegaJumpInsta.getDefaultPosition()
+        MegaJumpInsta.enable(pos.X, pos.Y, pos.Z)
+    end
+
     task.spawn(function()
         while rampConfig.running do
             local remaining, activeEventId = getActiveEventRemainingSeconds()
@@ -1190,6 +1227,9 @@ end
 local function stopMasterCycle()
     rampConfig.running = false
     addLog("[RAMP] [!] Parando ciclo automático...")
+    if MegaJumpInsta and MegaJumpInsta.isEnabled() then
+        MegaJumpInsta.disable()
+    end
 end
 
 -- ========================================
@@ -1531,7 +1571,12 @@ local function startHitSlimeLoop()
 
     task.spawn(function()
         while hitSlimeConfig.running do
-            activateMostExpensiveEvent()
+            -- noTeleport=true: nem teleporta pro shop de eventos -- o
+            -- Bata o Slime roda 100% por remote (não precisa estar perto
+            -- de nada), e o usuário já fica parado no local de abrir o
+            -- evento antes de clicar Jogar, então mover o personagem só
+            -- atrapalharia.
+            activateMostExpensiveEvent(true, true)
             if not hitSlimeConfig.running then break end
             waitWhileRunning(EVENT_DURATION_SECONDS + EVENT_DURATION_BUFFER_SECONDS, hitSlimeConfig)
         end
@@ -2326,6 +2371,278 @@ local function buildCheckpointDuplicatorFeature()
 end
 
 local CheckpointDup = buildCheckpointDuplicatorFeature()
+
+-- ========================================
+-- MEGA JUMP INSTA: colapsa CarSpawn + JumpCar + o checkpoint final (92,
+-- o multiplicador x1000000) pro MESMO ponto, e desativa as CarResetZones
+-- -- assim o carro nasce, já está "no" JumpCar e "no" checkpoint final,
+-- tudo no mesmo lugar, sem percurso nenhum. 100% client-side: as parts
+-- reais do jogo continuam nos lugares originais pro servidor e pros
+-- outros jogadores, só a SUA cópia renderizada é que muda de posição
+-- (mesma técnica do moveMiniGameButtonToEventShop, aplicada em 3 parts).
+-- As CarResetZones não são destruídas de verdade -- só desligamos
+-- Collide/Touch e escondemos (Transparency=1), assim dá pra desfazer
+-- (Restaurar) sem precisar recarregar o script inteiro.
+-- ========================================
+
+local function buildMegaJumpInstaFeature()
+    local enabled = false
+    local saved = { carSpawn = nil, jumpCar = nil, checkpoint92 = nil, checkpoint92Size = nil, checkpoint92SquareDups = {}, landingZone3 = nil, resetZones = {}, jumpCarForceAttrs = {} }
+
+    local function findCarResetZonesFolder()
+        local direct = Workspace:FindFirstChild("CarResetZones", true)
+        if direct then return direct end
+        return nil
+    end
+
+    local function findCarSpawnPart()
+        local direct = Workspace:FindFirstChild("CarSpawn", true)
+        if direct and direct:IsA("BasePart") then return direct end
+        return nil
+    end
+
+    local function findCheckpoint92()
+        local folder = Workspace:FindFirstChild("Checkpoints", true)
+        if not folder then return nil end
+
+        -- Busca exata por nome "92" entre os filhos diretos primeiro
+        -- (FindFirstChild pode devolver algo inesperado se houver mais de
+        -- uma pasta "Checkpoints" no jogo -- por isso comparamos o nome
+        -- manualmente em vez de confiar cegamente no primeiro achado).
+        local child = nil
+        for _, c in ipairs(folder:GetChildren()) do
+            if c.Name == "92" then
+                child = c
+                break
+            end
+        end
+        if not child then
+            addLog("[MEGA-JUMP-INSTA] [!] Não achei um filho chamado '92' dentro de " .. folder:GetFullName())
+            return nil
+        end
+
+        local part = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
+        if part then
+            addLog("[MEGA-JUMP-INSTA] [*] Checkpoint 92 encontrado: " .. part:GetFullName())
+        end
+        return part
+    end
+
+    local function findLandingZone3()
+        local direct = Workspace:FindFirstChild("LandingZone3", true)
+        if not direct then return nil end
+        if direct:IsA("BasePart") then return direct end
+        return direct:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    -- Offsets medidos direto no Studio (Properties de cada part, com o
+    -- CarSpawn tomado como ponto de referência (0,0,0)):
+    --   CarSpawn:     -0.108, 125.979, -1563.82
+    --   JumpCar:      -0,     143.307, -1539.577  -> offset (0, +17.328, +24.243)
+    --   Checkpoint 92: -0.021, 216,    -1538.844  -> offset (+0.087, +90.021, +24.976)
+    -- Ou seja, o JumpCar NÃO fica no mesmo Y do CarSpawn (fica ~17 studs
+    -- mais alto) e o Checkpoint 92 fica bem mais alto ainda (~90 studs),
+    -- igual a rampa real do jogo -- por isso não dá pra colapsar os 3 no
+    -- mesmo ponto exato, só alinhar em X/Z e respeitar essas diferenças
+    -- de altura. Além de mover, também zeramos qualquer Attribute de
+    -- força/impulso do JumpCar (nomes tipo Force/Power/Impulse/Speed),
+    -- restaurando os valores originais no Restaurar.
+    -- LandingZone3 (mais baixa, valor atualizado): -8.181, 133.341, -1398.538
+    -- -> offset (-8.073, +7.362, +165.282)
+    -- Checkpoint 92 (novo valor): -0.021, 216, -1541.379 -> offset (+0.087, +90.021, +22.441)
+    local JUMP_CAR_OFFSET = Vector3.new(0.108, 17.328, 24.243)
+    local CHECKPOINT92_OFFSET = Vector3.new(0.087, 90.021, 22.441)
+    local LANDING_ZONE_OFFSET = Vector3.new(-8.073, 7.362, 165.282)
+    local FORCE_ATTRIBUTE_KEYWORDS = { "force", "power", "impulse", "speed", "launch", "jump" }
+    -- Checkpoint 92 é minúsculo perto do JumpCar/CarSpawn -- quando tudo
+    -- colapsa pro mesmo ponto, o carro acaba pousando fora da área de
+    -- toque dele e triggando os checkpoints 0/1 por engano (que são bem
+    -- maiores). Aumentamos o Size dele (mantendo o centro) só enquanto
+    -- ativo, pra garantir que a área cubra o ponto alvo.
+    local CHECKPOINT_SIZE_MULTIPLIER = 6
+
+    -- Além de aumentar o Size do Checkpoint 92 em si, criamos mais 3
+    -- cópias dele ao redor -- mais acima, mais abaixo (só um pouco, pra
+    -- não ficar longe demais do chão) e mais à frente -- formando um
+    -- "quadrado" de áreas de toque em volta do ponto alvo. Cada cópia
+    -- dispara o MESMO MiniParkourEvent("CheckpointTouched", 92) que o
+    -- original, igual o CheckpointDup já faz com outros checkpoints.
+    local CHECKPOINT_SQUARE_OFFSETS = {
+        Vector3.new(0, 40, 0),   -- mais acima
+        Vector3.new(0, -15, 0),  -- mais abaixo (não tão abaixo)
+        Vector3.new(0, 0, 40),   -- mais à frente
+    }
+
+    local function wireCheckpoint92DupTouched(part)
+        part.CanTouch = true
+        part.CanCollide = false
+        part.Touched:Connect(function(hit)
+            if not hit then return end
+            local isMine = false
+            local character = LocalPlayer.Character
+            if character and hit:IsDescendantOf(character) then
+                isMine = true
+            else
+                local model = hit:FindFirstAncestorOfClass("Model")
+                isMine = model ~= nil and model:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+            end
+            if not isMine then return end
+            if not miniParkourEventRemote then return end
+            pcall(function() miniParkourEventRemote:FireServer("CheckpointTouched", 92) end)
+            addLog("[MEGA-JUMP-INSTA] Checkpoint 92 (cópia do quadrado) disparado")
+        end)
+    end
+
+    local function createCheckpoint92SquareDuplicates(checkpoint92)
+        local dups = {}
+        for _, offset in ipairs(CHECKPOINT_SQUARE_OFFSETS) do
+            local clone = checkpoint92:Clone()
+            clone.Name = "92_HubSquareDup"
+            clone.CFrame = checkpoint92.CFrame + offset
+            clone.Parent = checkpoint92.Parent
+            wireCheckpoint92DupTouched(clone)
+            table.insert(dups, clone)
+        end
+        return dups
+    end
+
+    local function removeCheckpoint92SquareDuplicates(dups)
+        for _, part in ipairs(dups) do
+            if part.Parent then part:Destroy() end
+        end
+    end
+
+    local function zeroOutJumpCarForce(jumpCar)
+        local savedAttrs = {}
+        local ok, attrs = pcall(function() return jumpCar:GetAttributes() end)
+        if ok and attrs then
+            for name, value in pairs(attrs) do
+                if typeof(value) == "number" then
+                    local lowerName = name:lower()
+                    for _, keyword in ipairs(FORCE_ATTRIBUTE_KEYWORDS) do
+                        if lowerName:find(keyword, 1, true) then
+                            savedAttrs[name] = value
+                            pcall(function() jumpCar:SetAttribute(name, 0) end)
+                            addLog("[MEGA-JUMP-INSTA] [*] Attribute '" .. name .. "' (" .. tostring(value) .. ") zerado no JumpCar")
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        return savedAttrs
+    end
+
+    local function restoreJumpCarForce(jumpCar, savedAttrs)
+        if not jumpCar or not jumpCar.Parent then return end
+        for name, value in pairs(savedAttrs) do
+            pcall(function() jumpCar:SetAttribute(name, value) end)
+        end
+    end
+
+    local function enable(x, y, z)
+        if enabled then return end
+
+        local carSpawn = findCarSpawnPart()
+        local jumpCar = jumpCarPart or findJumpCarPart()
+        local checkpoint92 = findCheckpoint92()
+        local landingZone3 = findLandingZone3()
+
+        if not carSpawn or not jumpCar or not checkpoint92 then
+            addLog("[MEGA-JUMP-INSTA] [!] Não achei tudo (CarSpawn=" .. tostring(carSpawn ~= nil)
+                .. ", JumpCar=" .. tostring(jumpCar ~= nil) .. ", Checkpoint 92=" .. tostring(checkpoint92 ~= nil) .. ")")
+            return
+        end
+
+        saved.carSpawn = { part = carSpawn, cframe = carSpawn.CFrame }
+        saved.jumpCar = { part = jumpCar, cframe = jumpCar.CFrame }
+        saved.checkpoint92 = { part = checkpoint92, cframe = checkpoint92.CFrame }
+        saved.checkpoint92Size = checkpoint92.Size
+        saved.landingZone3 = landingZone3 and { part = landingZone3, cframe = landingZone3.CFrame } or nil
+
+        local target = Vector3.new(x, y, z)
+        local function moveKeepingRotation(part, position)
+            local rotation = part.CFrame - part.CFrame.Position
+            part.CFrame = CFrame.new(position) * rotation
+        end
+        moveKeepingRotation(carSpawn, target)
+        moveKeepingRotation(jumpCar, target + JUMP_CAR_OFFSET)
+        moveKeepingRotation(checkpoint92, target + CHECKPOINT92_OFFSET)
+        checkpoint92.Size = saved.checkpoint92Size * CHECKPOINT_SIZE_MULTIPLIER
+        addLog("[MEGA-JUMP-INSTA] [*] Checkpoint 92 aumentado de " .. tostring(saved.checkpoint92Size) .. " pra " .. tostring(checkpoint92.Size))
+        saved.checkpoint92SquareDups = createCheckpoint92SquareDuplicates(checkpoint92)
+        addLog("[MEGA-JUMP-INSTA] [*] " .. #saved.checkpoint92SquareDups .. " cópias do Checkpoint 92 criadas em quadrado (acima/abaixo/frente)")
+        if landingZone3 then
+            moveKeepingRotation(landingZone3, target + LANDING_ZONE_OFFSET)
+        else
+            addLog("[MEGA-JUMP-INSTA] [!] LandingZone3 não encontrada (seguindo sem mover)")
+        end
+
+        saved.jumpCarForceAttrs = zeroOutJumpCarForce(jumpCar)
+
+        saved.resetZones = {}
+        local resetFolder = findCarResetZonesFolder()
+        if resetFolder then
+            for _, part in ipairs(resetFolder:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    saved.resetZones[part] = { canCollide = part.CanCollide, canTouch = part.CanTouch, transparency = part.Transparency }
+                    part.CanCollide = false
+                    part.CanTouch = false
+                    part.Transparency = 1
+                end
+            end
+        else
+            addLog("[MEGA-JUMP-INSTA] [!] CarResetZones não encontrado (seguindo sem desativar)")
+        end
+
+        enabled = true
+        addLog("[MEGA-JUMP-INSTA] [✓] Ativado -- CarSpawn/JumpCar/Checkpoint92 movidos pra (" .. x .. ", " .. y .. ", " .. z .. "), CarResetZones desativadas (só na sua tela)")
+    end
+
+    local function disable()
+        if not enabled then return end
+
+        if saved.carSpawn and saved.carSpawn.part.Parent then saved.carSpawn.part.CFrame = saved.carSpawn.cframe end
+        if saved.jumpCar and saved.jumpCar.part.Parent then saved.jumpCar.part.CFrame = saved.jumpCar.cframe end
+        if saved.checkpoint92 and saved.checkpoint92.part.Parent then
+            saved.checkpoint92.part.CFrame = saved.checkpoint92.cframe
+            if saved.checkpoint92Size then saved.checkpoint92.part.Size = saved.checkpoint92Size end
+        end
+        removeCheckpoint92SquareDuplicates(saved.checkpoint92SquareDups)
+        saved.checkpoint92SquareDups = {}
+        if saved.landingZone3 and saved.landingZone3.part.Parent then saved.landingZone3.part.CFrame = saved.landingZone3.cframe end
+
+        if saved.jumpCar then
+            restoreJumpCarForce(saved.jumpCar.part, saved.jumpCarForceAttrs)
+        end
+        saved.jumpCarForceAttrs = {}
+
+        for part, state in pairs(saved.resetZones) do
+            if part.Parent then
+                part.CanCollide = state.canCollide
+                part.CanTouch = state.canTouch
+                part.Transparency = state.transparency
+            end
+        end
+        saved.resetZones = {}
+
+        enabled = false
+        addLog("[MEGA-JUMP-INSTA] Restaurado -- posições e CarResetZones originais de volta")
+    end
+
+    return {
+        enable = enable,
+        disable = disable,
+        isEnabled = function() return enabled end,
+        getDefaultPosition = function()
+            local carSpawn = findCarSpawnPart()
+            if carSpawn then return carSpawn.Position end
+            return Vector3.new(0, 0, 0)
+        end,
+    }
+end
+
+MegaJumpInsta = buildMegaJumpInstaFeature()
 
 -- ========================================
 -- REMOTE SPY: loga ao vivo TODO FireServer/InvokeServer que sai do client
@@ -3765,6 +4082,8 @@ toggleAlertBtn.MouseButton1Click:Connect(function()
     end
 end)
 sellAllBtn.MouseButton1Click:Connect(function() autoSellAllSlimes() end)
+
+addInfoLabel(rampTab, "O Mega Jump Insta (CarSpawn/JumpCar/Checkpoint92/LandingZone3 colapsados na posição do CarSpawn, com a FORÇA DO IMPULSO do JumpCar zerada e 3 cópias extras do Checkpoint92 em quadrado -- acima/abaixo/frente -- pra garantir o toque) agora liga e desliga JUNTO com esse ciclo: ativa sozinho ao clicar Iniciar e desativa sozinho ao Parar (ou quando pausa automaticamente por outro jogador entrar). 100% client-side -- só a SUA tela muda.")
 
 -- --- ABA GAMES ---
 
