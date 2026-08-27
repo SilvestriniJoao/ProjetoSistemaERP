@@ -202,6 +202,26 @@ if existingGui then
 end
 
 -- ========================================
+-- GERACAO DO SCRIPT: destruir a GUI antiga acima nao desconecta os
+-- listeners globais (F5 do Freecam, Shift do Impulso, o Heartbeat do
+-- Impulso etc.) de uma execucao anterior do script -- rodando o hub 2x
+-- sem fechar o jogo, os dois conjuntos de conexoes ficam ativos ao
+-- mesmo tempo (foi isso que causou "[CAM] Freecam ativado" aparecer 2x
+-- no log). Cada execucao pega um numero de geracao novo em _G (global
+-- de verdade, sobrevive entre execucoes do script) e os handlers mais
+-- sensiveis (F5, Shift, Heartbeat do impulso) checam se ainda sao a
+-- geracao atual antes de fazer qualquer coisa -- a conexao antiga
+-- continua existindo, mas vira um no-op sozinha.
+-- ========================================
+
+_G.MegaRampHubGeneration = (_G.MegaRampHubGeneration or 0) + 1
+local HUB_GENERATION = _G.MegaRampHubGeneration
+
+local function isCurrentHubGeneration()
+    return _G.MegaRampHubGeneration == HUB_GENERATION
+end
+
+-- ========================================
 -- REMOTES
 -- ========================================
 
@@ -214,24 +234,28 @@ local function findRemote(name)
     return nil
 end
 
-local retryRunRemote = findRemote("RetryRun")
-local endBoxRevealRemote = findRemote("EndBoxReveal")
-local startBoxRevealRemote = findRemote("StartBoxReveal")
-local clientCarLaunchRemote = findRemote("ClientCarLaunch")
-local openBoxClickRemote = findRemote("OpenBoxClick")
-local boxStarsRevealRemote = findRemote("BoxStarsReveal")
-local sellSlimeOpenRemote = findRemote("SellSlimeOpen")
-local sellSlimeActionRemote = findRemote("SellSlimeAction")
-local equipBestInventoryRemote = findRemote("EquipBestInventory")
-local eventShopUpdateRemote = findRemote("EventShopUpdate")
-local eventShopActionRemote = findRemote("EventShopAction")
-local selectInventoryItemRemote = findRemote("SelectInventoryItem")
-local inventoryUpdateRemote = findRemote("InventoryUpdate")
-local giftActionRemote = findRemote("GiftAction")
-local miniGameMemoryEvent = findRemote("MiniGame1MemoryEvent")
+local Remotes = {
+    retryRun = findRemote("RetryRun"),
+    endBoxReveal = findRemote("EndBoxReveal"),
+    startBoxReveal = findRemote("StartBoxReveal"),
+    clientCarLaunch = findRemote("ClientCarLaunch"),
+    openBoxClick = findRemote("OpenBoxClick"),
+    boxStarsReveal = findRemote("BoxStarsReveal"),
+    sellSlimeOpen = findRemote("SellSlimeOpen"),
+    sellSlimeAction = findRemote("SellSlimeAction"),
+    equipBestInventory = findRemote("EquipBestInventory"),
+    eventShopUpdate = findRemote("EventShopUpdate"),
+    eventShopAction = findRemote("EventShopAction"),
+    selectInventoryItem = findRemote("SelectInventoryItem"),
+    inventoryUpdate = findRemote("InventoryUpdate"),
+    giftAction = findRemote("GiftAction"),
+    giftIncoming = findRemote("GiftIncoming"),
+    giftOpenInventory = findRemote("GiftOpenInventory"),
+    miniGameMemoryEvent = findRemote("MiniGame1MemoryEvent"),
+    leaderboardUpdate = findRemote("LeaderboardUpdate"),
+    miniParkourEvent = findRemote("MiniParkourEvent"),
+}
 local miniGameButton = Workspace:WaitForChild("MiniGame1Button")
-local leaderboardUpdateRemote = findRemote("LeaderboardUpdate")
-local miniParkourEventRemote = findRemote("MiniParkourEvent")
 
 -- Top 5 leaderboard (Cash/renda base/carros de cada jogador) que o próprio
 -- jogo já transmite pra todo mundo -- só precisamos ouvir o mesmo remote,
@@ -239,8 +263,8 @@ local miniParkourEventRemote = findRemote("MiniParkourEvent")
 local latestLeaderboardData = nil
 local refreshLeaderboardUI -- atribuída lá na aba JOGADORES, mais abaixo
 
-if leaderboardUpdateRemote then
-    leaderboardUpdateRemote.OnClientEvent:Connect(function(list)
+if Remotes.leaderboardUpdate then
+    Remotes.leaderboardUpdate.OnClientEvent:Connect(function(list)
         latestLeaderboardData = list
         if refreshLeaderboardUI then refreshLeaderboardUI() end
     end)
@@ -255,12 +279,14 @@ end
 -- direto por esse remote, sem precisar abrir o inventário e clicar.
 -- ========================================
 
+local function buildInventoryFeature()
+
 local latestInventoryList = nil
 local latestEquippedIndex = nil
 local refreshInventoryUI -- atribuída lá na aba SLIMES, mais abaixo
 
-if inventoryUpdateRemote then
-    inventoryUpdateRemote.OnClientEvent:Connect(function(list, equippedIndex)
+if Remotes.inventoryUpdate then
+    Remotes.inventoryUpdate.OnClientEvent:Connect(function(list, equippedIndex)
         latestInventoryList = list
         latestEquippedIndex = equippedIndex
         if refreshInventoryUI then refreshInventoryUI() end
@@ -268,13 +294,23 @@ if inventoryUpdateRemote then
 end
 
 local function equipSlimeByIndex(index)
-    if not selectInventoryItemRemote then
+    if not Remotes.selectInventoryItem then
         addLog("[SLIMES] [!] SelectInventoryItem não encontrado")
         return
     end
-    pcall(function() selectInventoryItemRemote:FireServer(index) end)
+    pcall(function() Remotes.selectInventoryItem:FireServer(index) end)
     addLog("[SLIMES] Pedido pra equipar índice " .. tostring(index))
 end
+
+return {
+    equipByIndex = equipSlimeByIndex,
+    setRefreshCallback = function(fn) refreshInventoryUI = fn end,
+    getList = function() return latestInventoryList end,
+    getEquippedIndex = function() return latestEquippedIndex end,
+}
+end
+
+local Inventory = buildInventoryFeature()
 
 local function findPlayerByNameFragment(text)
     if not text or text == "" then return nil end
@@ -289,7 +325,7 @@ local function findPlayerByNameFragment(text)
 end
 
 local function sendGiftByIndex(targetPlayer, index)
-    if not giftActionRemote then
+    if not Remotes.giftAction then
         addLog("[GIFT] [!] GiftAction não encontrado")
         return
     end
@@ -297,7 +333,7 @@ local function sendGiftByIndex(targetPlayer, index)
         addLog("[GIFT] [!] Escolha um jogador de destino")
         return
     end
-    pcall(function() giftActionRemote:FireServer("RequestGift", targetPlayer, index) end)
+    pcall(function() Remotes.giftAction:FireServer("RequestGift", targetPlayer, index) end)
     addLog("[GIFT] Pedido de gift enviado: índice " .. tostring(index) .. " -> " .. targetPlayer.Name)
 end
 
@@ -511,10 +547,134 @@ local function simulateButtonClick(button)
 end
 
 -- ========================================
+-- ACEITAR GIFTS AUTOMATICAMENTE: quando outro jogador te manda um gift, o
+-- jogo dispara GiftIncoming:OnClientEvent(...) e abre uma tela de
+-- confirmação (com um botão tipo "Aceitar"/"OK"/"Accept"). Com o toggle
+-- LIGADO, a gente faz os dois passos sozinho: (1) assim que o
+-- GiftIncoming chega, dispara GiftAction:FireServer com as variantes de
+-- nome de ação mais prováveis pra aceitar (o jogo ignora as que não
+-- reconhece, então tentar várias é seguro); (2) fica de olho em QUALQUER
+-- GuiButton novo que apareça dentro do PlayerGui com texto de
+-- confirmação (Aceitar/Accept/OK/Confirmar/Sim/Yes) e clica sozinho,
+-- cobrindo o caso de precisar confirmar na tela também. Como não temos
+-- acesso ao script do jogo, essa dupla abordagem cobre os formatos mais
+-- comuns sem precisar adivinhar o nome exato do remote/GUI.
+-- ========================================
+
+local function buildAutoAcceptGiftsFeature()
+    local enabled = false
+    local incomingConn = nil
+    local guiWatchConn = nil
+
+    local ACCEPT_ACTION_NAMES = {
+        "AcceptGift", "Accept", "ConfirmGift", "Confirm", "GiftAccept", "AcceptGiftRequest",
+    }
+
+    local ACCEPT_TEXT_KEYWORDS = {
+        "accept", "aceitar", "confirmar", "confirm", "aceptar", "sim", "yes", "ok",
+    }
+
+    local function tryAcceptViaRemote(...)
+        if not Remotes.giftAction then return end
+        local args = { ... }
+        for _, actionName in ipairs(ACCEPT_ACTION_NAMES) do
+            pcall(function() Remotes.giftAction:FireServer(actionName, table.unpack(args)) end)
+        end
+        addLog("[GIFT] [*] Gift recebido -- tentando aceitar automaticamente")
+    end
+
+    local function looksLikeAcceptButton(obj)
+        if not obj:IsA("GuiButton") then return false end
+        local text = tostring(obj.Text or ""):lower()
+        if text == "" then return false end
+        for _, keyword in ipairs(ACCEPT_TEXT_KEYWORDS) do
+            if text:find(keyword, 1, true) then return true end
+        end
+        return false
+    end
+
+    local function watchForConfirmButton(root)
+        for _, obj in ipairs(root:GetDescendants()) do
+            if looksLikeAcceptButton(obj) then
+                task.wait(0.15)
+                simulateButtonClick(obj)
+                addLog("[GIFT] [✓] Botão de confirmação clicado automaticamente ('" .. tostring(obj.Text) .. "')")
+                return
+            end
+        end
+    end
+
+    local function enable()
+        if enabled then return end
+
+        if Remotes.giftIncoming then
+            incomingConn = Remotes.giftIncoming.OnClientEvent:Connect(function(...)
+                tryAcceptViaRemote(...)
+                task.spawn(function()
+                    task.wait(0.3)
+                    watchForConfirmButton(playerGui)
+                end)
+            end)
+        else
+            addLog("[GIFT] [!] GiftIncoming não encontrado -- só o clique automático na tela de confirmação vai funcionar")
+        end
+
+        -- Cobre o caso de a tela de confirmação aparecer sem (ou antes do)
+        -- GiftIncoming disparar -- qualquer GuiButton novo que pareça um
+        -- botão de aceitar/confirmar é clicado sozinho.
+        guiWatchConn = playerGui.DescendantAdded:Connect(function(obj)
+            if looksLikeAcceptButton(obj) then
+                task.spawn(function()
+                    task.wait(0.15)
+                    if obj.Parent then
+                        simulateButtonClick(obj)
+                        addLog("[GIFT] [✓] Botão de confirmação clicado automaticamente ('" .. tostring(obj.Text) .. "')")
+                    end
+                end)
+            end
+        end)
+
+        enabled = true
+        addLog("[GIFT] [✓] Aceitar gifts automaticamente ATIVADO")
+    end
+
+    local function disable()
+        if not enabled then return end
+
+        if incomingConn then incomingConn:Disconnect() incomingConn = nil end
+        if guiWatchConn then guiWatchConn:Disconnect() guiWatchConn = nil end
+
+        enabled = false
+        addLog("[GIFT] Aceitar gifts automaticamente DESATIVADO")
+    end
+
+    local function toggle()
+        if enabled then disable() else enable() end
+        return enabled
+    end
+
+    return {
+        toggle = toggle,
+        isEnabled = function() return enabled end,
+    }
+end
+
+local AutoAcceptGifts = buildAutoAcceptGiftsFeature()
+
+-- ========================================
 -- ALERTA: glitterrainbow/limited
 -- ========================================
 
-local equipBestSlimes
+local function buildAlertFeature()
+
+local function equipBestSlimes()
+    if not Remotes.equipBestInventory then
+        addLog("[!] EquipBestInventory não encontrado")
+        return
+    end
+    pcall(function() Remotes.equipBestInventory:FireServer() end)
+    addLog("[✓] EquipBestInventory disparado")
+end
 
 local function playDivineAlert()
     local sound = Instance.new("Sound")
@@ -549,8 +709,8 @@ local function playDivineAlertSequence(itemName, itemValue)
     end)
 end
 
-if boxStarsRevealRemote then
-    boxStarsRevealRemote.OnClientEvent:Connect(function(index, revealed, rarity, name, value)
+if Remotes.boxStarsReveal then
+    Remotes.boxStarsReveal.OnClientEvent:Connect(function(index, revealed, rarity, name, value)
         if revealed and name then
             local lowerName = name:lower()
             for _, keyword in ipairs(alertKeywords) do
@@ -564,14 +724,24 @@ if boxStarsRevealRemote then
     end)
 end
 
+return {
+    keywords = alertKeywords,
+    equipBest = equipBestSlimes,
+}
+end
+
+local AlertFeature = buildAlertFeature()
+
 -- ========================================
 -- VENDER TODOS OS SLIMES
 -- ========================================
 
+local function buildSellAllFeature()
+
 local latestSellList = nil
 
-if sellSlimeOpenRemote then
-    sellSlimeOpenRemote.OnClientEvent:Connect(function(list)
+if Remotes.sellSlimeOpen then
+    Remotes.sellSlimeOpen.OnClientEvent:Connect(function(list)
         latestSellList = list
     end)
 end
@@ -592,7 +762,7 @@ end
 local sellingAll = false
 
 local function sellAllSlimesBlocking()
-    if not sellSlimeActionRemote then
+    if not Remotes.sellSlimeAction then
         addLog("[!] SellSlimeAction não encontrado")
         return
     end
@@ -617,7 +787,7 @@ local function sellAllSlimesBlocking()
         local index = item and item.Index
 
         if index then
-            pcall(function() sellSlimeActionRemote:FireServer("Sell", index) end)
+            pcall(function() Remotes.sellSlimeAction:FireServer("Sell", index) end)
             sold = sold + 1
             addLog("[✓] Vendido slime #" .. sold .. " (Index=" .. tostring(index) .. ", restam ~" .. (sizeBefore - 1) .. ")")
         end
@@ -714,14 +884,13 @@ local function autoSellAllSlimes()
     task.spawn(autoSellAllSlimesBlocking)
 end
 
-equipBestSlimes = function()
-    if not equipBestInventoryRemote then
-        addLog("[!] EquipBestInventory não encontrado")
-        return
-    end
-    pcall(function() equipBestInventoryRemote:FireServer() end)
-    addLog("[✓] EquipBestInventory disparado")
+return {
+    sellAll = autoSellAllSlimesBlocking,
+    sellAllAsync = autoSellAllSlimes,
+}
 end
+
+local SellAll = buildSellAllFeature()
 
 -- ========================================
 -- EVENT SHOP (compartilhado entre a aba Ramp e Bata o Slime)
@@ -731,8 +900,8 @@ local EVENT_DURATION_SECONDS = 600
 local EVENT_DURATION_BUFFER_SECONDS = 10
 
 local latestEventShopPayload = nil
-if eventShopUpdateRemote then
-    eventShopUpdateRemote.OnClientEvent:Connect(function(payload)
+if Remotes.eventShopUpdate then
+    Remotes.eventShopUpdate.OnClientEvent:Connect(function(payload)
         latestEventShopPayload = payload
     end)
 end
@@ -752,35 +921,82 @@ end
 -- como o Roblox checa a distância do ProximityPrompt usando a posição
 -- RENDERIZADA no seu client (é por isso que o prompt "E" aparece/some
 -- sozinho conforme você anda), mover a Part localmente é o suficiente
--- pra conseguir disparar o prompt sem precisar sair do lugar. Só roda
--- 1x no carregamento do hub (o painel não se move sozinho no jogo).
-local function moveMiniGameButtonToEventShop()
-    local prompt = findEventShopPrompt()
-    if not prompt then
-        addLog("[MINIGAME] [!] EventShopPrompt não encontrado, não deu pra mover o painel de minigames")
-        return
-    end
-    local shopPos = getPromptWorldPosition(prompt)
-    if not shopPos then
-        addLog("[MINIGAME] [!] Não consegui ler a posição do EventShopPrompt")
-        return
+-- pra conseguir disparar o prompt sem precisar sair do lugar. Agora é
+-- um toggle (era automático antes) -- e desliga sozinho quando o Bata o
+-- Slime inicia, porque o loop dele já ativa o evento repetidamente sem
+-- teleportar (noTeleport=true) e o painel grudado no shop atrapalha.
+local function buildMiniGameStickFeature()
+    local enabled = false
+    local saved = nil
+    local statusLabel = nil
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
+        end
     end
 
-    local part = miniGameButton:IsA("BasePart") and miniGameButton or miniGameButton:FindFirstChildWhichIsA("BasePart", true)
-    if not part then
-        addLog("[MINIGAME] [!] MiniGame1Button não tem nenhuma BasePart pra mover")
-        return
+    local function enable()
+        if enabled then return end
+
+        local prompt = findEventShopPrompt()
+        if not prompt then
+            addLog("[MINIGAME] [!] EventShopPrompt não encontrado, não deu pra mover o painel de minigames")
+            return
+        end
+        local shopPos = getPromptWorldPosition(prompt)
+        if not shopPos then
+            addLog("[MINIGAME] [!] Não consegui ler a posição do EventShopPrompt")
+            return
+        end
+
+        local part = miniGameButton:IsA("BasePart") and miniGameButton or miniGameButton:FindFirstChildWhichIsA("BasePart", true)
+        if not part then
+            addLog("[MINIGAME] [!] MiniGame1Button não tem nenhuma BasePart pra mover")
+            return
+        end
+
+        saved = { part = part, cframe = part.CFrame }
+        local currentRotation = part.CFrame - part.CFrame.Position
+        part.CFrame = CFrame.new(shopPos) * currentRotation
+
+        enabled = true
+        setStatus("Status: GRUDADO NO EVENTO", Color3.fromRGB(0, 220, 220))
+        addLog("[MINIGAME] [✓] Painel de minigames grudado no shop de eventos (só na sua tela)")
     end
 
-    local currentRotation = part.CFrame - part.CFrame.Position
-    part.CFrame = CFrame.new(shopPos) * currentRotation
-    addLog("[MINIGAME] [✓] Painel de minigames movido pra cima do shop de eventos (só na sua tela)")
+    local function disable()
+        if not enabled then return end
+
+        if saved and saved.part.Parent then
+            saved.part.CFrame = saved.cframe
+        end
+        saved = nil
+
+        enabled = false
+        setStatus("Status: DESLIGADO (posição original)", Color3.fromRGB(100, 200, 100))
+        addLog("[MINIGAME] Painel de minigames voltou pra posição original")
+    end
+
+    local function toggle()
+        if enabled then disable() else enable() end
+        return enabled
+    end
+
+    return {
+        toggle = toggle,
+        enable = enable,
+        disable = disable,
+        isEnabled = function() return enabled end,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+    }
 end
 
-task.defer(moveMiniGameButtonToEventShop)
+local MiniGameStick = buildMiniGameStickFeature()
 
 local function activateMostExpensiveEvent(stayAtShop, noTeleport)
-    if not eventShopActionRemote then
+    if not Remotes.eventShopAction then
         addLog("[EVENTO] [!] EventShopAction não encontrado")
         return false
     end
@@ -794,8 +1010,8 @@ local function activateMostExpensiveEvent(stayAtShop, noTeleport)
     addLog("[EVENTO] [*] Ativando evento mais caro: " .. tostring(event.Id) .. " (custo " .. tostring(event.Cost) .. ")")
 
     pcall(function() LocalPlayer:SetAttribute("EventShopMenuOpen", true) end)
-    if selectInventoryItemRemote then
-        pcall(function() selectInventoryItemRemote:FireServer(0) end)
+    if Remotes.selectInventoryItem then
+        pcall(function() Remotes.selectInventoryItem:FireServer(0) end)
     end
 
     local originalCFrame = nil
@@ -811,9 +1027,9 @@ local function activateMostExpensiveEvent(stayAtShop, noTeleport)
     end
 
     latestEventShopPayload = nil
-    pcall(function() eventShopActionRemote:FireServer("RequestState") end)
+    pcall(function() Remotes.eventShopAction:FireServer("RequestState") end)
     task.wait(0.1)
-    pcall(function() eventShopActionRemote:FireServer("Activate", event.Id) end)
+    pcall(function() Remotes.eventShopAction:FireServer("Activate", event.Id) end)
 
     local start = tick()
     local confirmed = false
@@ -841,9 +1057,9 @@ local function activateMostExpensiveEvent(stayAtShop, noTeleport)
 end
 
 local function getActiveEventRemainingSeconds()
-    if not eventShopActionRemote then return nil end
+    if not Remotes.eventShopAction then return nil end
     latestEventShopPayload = nil
-    pcall(function() eventShopActionRemote:FireServer("RequestState") end)
+    pcall(function() Remotes.eventShopAction:FireServer("RequestState") end)
     local start = tick()
     while not latestEventShopPayload and (tick() - start) < 3 do
         task.wait(0.1)
@@ -993,10 +1209,10 @@ local function waitForEvent(remote, timeout)
 end
 
 local function waitForLaunchArgs(timeout)
-    if not clientCarLaunchRemote then return false end
+    if not Remotes.clientCarLaunch then return false end
     local result = nil
     local conn
-    conn = clientCarLaunchRemote.OnClientEvent:Connect(function(carInstance, launchVector, carName, forward, up)
+    conn = Remotes.clientCarLaunch.OnClientEvent:Connect(function(carInstance, launchVector, carName, forward, up)
         result = { car = carInstance, vector = launchVector, name = carName, forward = forward, up = up }
     end)
 
@@ -1023,14 +1239,14 @@ local function moveCarTo(car, carPart, position)
 end
 
 local function clickOpenBoxMultiple()
-    if not openBoxClickRemote then
+    if not Remotes.openBoxClick then
         addLog("[RAMP] [!] OpenBoxClick não encontrado")
         return
     end
 
     for i = 1, rampConfig.openBoxClicks do
         if not rampConfig.running then break end
-        pcall(function() openBoxClickRemote:FireServer() end)
+        pcall(function() Remotes.openBoxClick:FireServer() end)
         task.wait(rampConfig.openBoxClickDelay)
     end
 end
@@ -1040,28 +1256,28 @@ end
 -- Rampa Loop (aba de automação) desligado.
 local autoBoxClickRunning = false
 local function autoClickOpenBoxNow()
-    if not openBoxClickRemote then return end
+    if not Remotes.openBoxClick then return end
     if autoBoxClickRunning then return end
     autoBoxClickRunning = true
 
     for i = 1, rampConfig.openBoxClicks do
-        pcall(function() openBoxClickRemote:FireServer() end)
+        pcall(function() Remotes.openBoxClick:FireServer() end)
         task.wait(rampConfig.openBoxClickDelay)
     end
 
     autoBoxClickRunning = false
 end
 
-if startBoxRevealRemote then
-    startBoxRevealRemote.OnClientEvent:Connect(function()
+if Remotes.startBoxReveal then
+    Remotes.startBoxReveal.OnClientEvent:Connect(function()
         task.spawn(autoClickOpenBoxNow)
     end)
     addLog("[RAMP] [*] Auto-click da caixa ativo (independente do loop)")
 end
 
 local function forceTeleportToJumpCar()
-    if retryRunRemote then
-        pcall(function() retryRunRemote:FireServer() end)
+    if Remotes.retryRun then
+        pcall(function() Remotes.retryRun:FireServer() end)
         task.wait(rampConfig.carSpawnWait)
     end
 
@@ -1123,11 +1339,11 @@ local function runTeleportLoopForDuration(durationSeconds)
                 -- CarSpawn/JumpCar, o carro já pousa em cima dele
                 -- sozinho, então esse teleporte forçado não faz mais
                 -- sentido (mandava o carro pra longe, pro lugar antigo).
-                waitForEvent(startBoxRevealRemote, 8)
+                waitForEvent(Remotes.startBoxReveal, 8)
                 -- Os cliques em si são disparados pelo listener global
                 -- autoClickOpenBoxNow (StartBoxReveal.OnClientEvent), que
                 -- roda sempre, com ou sem o loop ativo.
-                waitForEvent(endBoxRevealRemote, 12)
+                waitForEvent(Remotes.endBoxReveal, 12)
             end
         end
 
@@ -1176,7 +1392,7 @@ local function startMasterCycle()
 
             if rampStatusLabel then rampStatusLabel.Text = t("status_selling") end
             addLog("[RAMP] [*] Tempo do evento acabou, vendendo todos os slimes...")
-            autoSellAllSlimesBlocking()
+            SellAll.sellAll()
 
             cycleCount = cycleCount + 1
             if rampCycleLabel then rampCycleLabel.Text = t("label_cycles_complete") .. cycleCount end
@@ -1208,8 +1424,8 @@ end
 local memoryLastRejected, memoryLastReward = nil, nil
 local hitSlimeToken, hitSlimeLastRejected, hitSlimeLastReward = nil, nil, nil
 
-if miniGameMemoryEvent then
-    miniGameMemoryEvent.OnClientEvent:Connect(function(kind, gameType, a, b, c, d)
+if Remotes.miniGameMemoryEvent then
+    Remotes.miniGameMemoryEvent.OnClientEvent:Connect(function(kind, gameType, a, b, c, d)
         kind = tostring(kind or "")
         gameType = tostring(gameType or "")
 
@@ -1477,7 +1693,7 @@ local function runHitSlimeAttempt()
     hitSlimeLastRejected = nil
     hitSlimeLastReward = nil
 
-    pcall(function() miniGameMemoryEvent:FireServer("StartRound", "HitTheSlime") end)
+    pcall(function() Remotes.miniGameMemoryEvent:FireServer("StartRound", "HitTheSlime") end)
 
     local start = tick()
     while hitSlimeConfig.running and not hitSlimeToken and not hitSlimeLastRejected and (tick() - start) < 5 do
@@ -1495,7 +1711,7 @@ local function runHitSlimeAttempt()
         task.wait(hitSlimeConfig.secondsPerRound)
 
         pcall(function()
-            miniGameMemoryEvent:FireServer("Progress", "HitTheSlime", hitSlimeToken, level, cumulative)
+            Remotes.miniGameMemoryEvent:FireServer("Progress", "HitTheSlime", hitSlimeToken, level, cumulative)
         end)
 
         if hitSlimeLastRejected then
@@ -1504,7 +1720,7 @@ local function runHitSlimeAttempt()
         end
     end
 
-    pcall(function() miniGameMemoryEvent:FireServer("WinRound", "HitTheSlime", hitSlimeToken) end)
+    pcall(function() Remotes.miniGameMemoryEvent:FireServer("WinRound", "HitTheSlime", hitSlimeToken) end)
 
     local waitStart = tick()
     while hitSlimeConfig.running and not hitSlimeLastReward and (tick() - waitStart) < 6 do
@@ -1518,6 +1734,9 @@ end
 local function startHitSlimeLoop()
     if hitSlimeConfig.running then return end
     hitSlimeConfig.running = true
+    if MiniGameStick.isEnabled() then
+        MiniGameStick.disable()
+    end
     if hitSlimeStatusLabel then
         hitSlimeStatusLabel.Text = t("status_running")
         hitSlimeStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
@@ -1569,14 +1788,18 @@ local rampPause, rampResume, rampGuardedStart, rampGuardedStop =
     makeAutoPauseGuards(rampConfig, function() return rampStatusLabel end, startMasterCycle, stopMasterCycle, "RAMP")
 local memoryPause, memoryResume, memoryGuardedStart, memoryGuardedStop =
     makeAutoPauseGuards(memoryConfig, function() return memoryStatusLabel end, startMemoryLoop, stopMemoryLoop, "MEMORIA")
-local hitSlimePause, hitSlimeResume, hitSlimeGuardedStart, hitSlimeGuardedStop =
-    makeAutoPauseGuards(hitSlimeConfig, function() return hitSlimeStatusLabel end, startHitSlimeLoop, stopHitSlimeLoop, "HITSLIME")
+
+-- Bata o Slime NÃO entra mais na pausa automática por outro jogador --
+-- ela existia porque o loop antigo teleportava o personagem pro shop de
+-- eventos (precisava "disfarçar" isso enquanto tinha gente por perto).
+-- Agora ele roda 100% por remote, sem mover ninguém, então não tem mais
+-- nada pra esconder -- fica solto, rodando direto mesmo com outros
+-- jogadores na sala.
 
 Players.PlayerAdded:Connect(function(player)
     if player == LocalPlayer then return end
     rampPause()
     memoryPause()
-    hitSlimePause()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -1584,12 +1807,13 @@ Players.PlayerRemoving:Connect(function(player)
     task.wait(0.2)
     rampResume()
     memoryResume()
-    hitSlimeResume()
 end)
 
 -- ========================================
 -- ABA CAM: Free Cam + ABA JOGADORES: Spectate
 -- ========================================
+
+local function buildFreecamFeature()
 
 local freecamConfig = { active = false, baseSpeed = 60, boostMultiplier = 3 }
 local freecamAnchoredHrp = nil
@@ -1758,170 +1982,36 @@ stopSpectate = function()
     addLog("[PLAYERS] Spectate desativado")
 end
 
+return {
+    config = freecamConfig,
+    enable = enableFreecam,
+    disable = disableFreecam,
+    toggle = toggleFreecam,
+    startSpectate = startSpectate,
+    stopSpectate = stopSpectate,
+    setFreecamStatusLabel = function(lbl) freecamStatusLabel = lbl end,
+    setPlayersStatusLabel = function(lbl) playersStatusLabel = lbl end,
+    isSpectating = function() return spectatingPlayer ~= nil end,
+    getSpectatingPlayer = function() return spectatingPlayer end,
+}
+end
+
+local Freecam = buildFreecamFeature()
+
 LocalPlayer.CharacterAdded:Connect(function()
-    if freecamConfig.active then disableFreecam() end
-    if spectatingPlayer then stopSpectate() end
+    Freecam.disable()
+    if Freecam.isSpectating() then Freecam.stopSpectate() end
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-    if spectatingPlayer == player then stopSpectate() end
+    if Freecam.getSpectatingPlayer() == player then Freecam.stopSpectate() end
 end)
 
 UserInputService.InputBegan:Connect(function(input, processed)
+    if not isCurrentHubGeneration() then return end
     if input.KeyCode == Enum.KeyCode.F5 then
-        toggleFreecam()
+        Freecam.toggle()
     end
-end)
-
--- ========================================
--- ESP: ver outros jogadores através de parede (100% visual, só na sua
--- tela -- Highlight + BillboardGui são API padrão do Roblox, não depende
--- de nenhuma função especial do executor).
--- ========================================
-
-local espConfig = { enabled = false, maxDistance = 1000 }
-local espObjects = {}
-local espCharAddedConns = {}
-local espPlayerAddedConn = nil
-local espHeartbeatConn = nil
-local espStatusLabel
-
-local ESP_COLOR = Color3.fromRGB(255, 60, 60)
-
-local function removeEspFor(player)
-    local data = espObjects[player]
-    if not data then return end
-    if data.highlight then data.highlight:Destroy() end
-    if data.billboard then data.billboard:Destroy() end
-    espObjects[player] = nil
-end
-
-local function attachEspFor(player)
-    if player == LocalPlayer then return end
-    if espObjects[player] then return end
-
-    local character = player.Character
-    if not character then return end
-    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
-    if not head then return end
-
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "HubESP"
-    highlight.FillTransparency = 0.75
-    highlight.OutlineTransparency = 0
-    highlight.FillColor = ESP_COLOR
-    highlight.OutlineColor = ESP_COLOR
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = character
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "HubESPTag"
-    billboard.Adornee = head
-    billboard.Size = UDim2.new(0, 160, 0, 36)
-    billboard.StudsOffset = Vector3.new(0, 1, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Parent = character
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.new(1, 1, 1)
-    label.TextStrokeTransparency = 0
-    label.TextScaled = true
-    label.Font = Enum.Font.GothamBold
-    label.Text = player.Name
-    label.Parent = billboard
-
-    espObjects[player] = { highlight = highlight, billboard = billboard, label = label, head = head }
-end
-
-local function espHeartbeatStep()
-    local myChar = LocalPlayer.Character
-    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-
-    for player, data in pairs(espObjects) do
-        if not player.Character or not data.head or not data.head.Parent then
-            removeEspFor(player)
-        else
-            local dist = nil
-            if myHrp then
-                local ok, d = pcall(function() return (data.head.Position - myHrp.Position).Magnitude end)
-                if ok then dist = d end
-            end
-
-            local visible = (not dist) or dist <= espConfig.maxDistance
-            data.highlight.Enabled = visible
-            data.billboard.Enabled = visible
-
-            if dist then
-                data.label.Text = player.Name .. " [" .. math.floor(dist) .. "m]"
-            else
-                data.label.Text = player.Name
-            end
-        end
-    end
-end
-
-local function enableEsp()
-    if espConfig.enabled then return end
-    espConfig.enabled = true
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            attachEspFor(plr)
-            espCharAddedConns[plr] = plr.CharacterAdded:Connect(function()
-                task.wait(0.3)
-                attachEspFor(plr)
-            end)
-        end
-    end
-
-    espPlayerAddedConn = Players.PlayerAdded:Connect(function(plr)
-        attachEspFor(plr)
-        espCharAddedConns[plr] = plr.CharacterAdded:Connect(function()
-            task.wait(0.3)
-            attachEspFor(plr)
-        end)
-    end)
-
-    espHeartbeatConn = RunService.Heartbeat:Connect(espHeartbeatStep)
-
-    if espStatusLabel then
-        espStatusLabel.Text = t("status_active")
-        espStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
-    end
-    addLog("[ESP] Ativado")
-end
-
-local function disableEsp()
-    if not espConfig.enabled then return end
-    espConfig.enabled = false
-
-    if espHeartbeatConn then espHeartbeatConn:Disconnect() espHeartbeatConn = nil end
-    if espPlayerAddedConn then espPlayerAddedConn:Disconnect() espPlayerAddedConn = nil end
-
-    for plr, conn in pairs(espCharAddedConns) do
-        conn:Disconnect()
-    end
-    espCharAddedConns = {}
-
-    for plr in pairs(espObjects) do
-        removeEspFor(plr)
-    end
-
-    if espStatusLabel then
-        espStatusLabel.Text = t("status_inactive")
-        espStatusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
-    end
-    addLog("[ESP] Desativado")
-end
-
-Players.PlayerRemoving:Connect(function(player)
-    if espCharAddedConns[player] then
-        espCharAddedConns[player]:Disconnect()
-        espCharAddedConns[player] = nil
-    end
-    removeEspFor(player)
 end)
 
 -- ========================================
@@ -1939,18 +2029,21 @@ local function getCarMainPart(car)
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)
+    if not isCurrentHubGeneration() then return end
     if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
         carBoostConfig.holding = true
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
+    if not isCurrentHubGeneration() then return end
     if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
         carBoostConfig.holding = false
     end
 end)
 
 RunService.Heartbeat:Connect(function(dt)
+    if not isCurrentHubGeneration() then return end
     if not carBoostConfig.enabled then
         if carStatusLabel then
             carStatusLabel.Text = t("status_off")
@@ -2142,8 +2235,8 @@ local function buildCheckpointDuplicatorFeature()
                 isMine = model ~= nil and model:GetAttribute("OwnerUserId") == LocalPlayer.UserId
             end
             if not isMine then return end
-            if not miniParkourEventRemote then return end
-            pcall(function() miniParkourEventRemote:FireServer("CheckpointTouched", checkpointNumber) end)
+            if not Remotes.miniParkourEvent then return end
+            pcall(function() Remotes.miniParkourEvent:FireServer("CheckpointTouched", checkpointNumber) end)
             addLog("[CHECKPOINT-DUP] Disparado checkpoint " .. tostring(checkpointNumber))
         end)
     end
@@ -2455,8 +2548,8 @@ local function buildMegaJumpInstaFeature()
                 isMine = model ~= nil and model:GetAttribute("OwnerUserId") == LocalPlayer.UserId
             end
             if not isMine then return end
-            if not miniParkourEventRemote then return end
-            pcall(function() miniParkourEventRemote:FireServer("CheckpointTouched", 92) end)
+            if not Remotes.miniParkourEvent then return end
+            pcall(function() Remotes.miniParkourEvent:FireServer("CheckpointTouched", 92) end)
             addLog("[MEGA-JUMP-INSTA] Checkpoint 92 (cópia do quadrado) disparado")
         end)
     end
@@ -2613,846 +2706,331 @@ end
 MegaJumpInsta = buildMegaJumpInstaFeature()
 
 -- ========================================
--- REMOTE SPY: loga ao vivo TODO FireServer/InvokeServer que sai do client
--- (não só os que a gente mesmo dispara) via hookmetamethod no __namecall
--- do jogo -- é assim que dá pra ver o que o PRÓPRIO JOGO manda pro
--- servidor quando você vende, ganha, abre caixa etc., sem precisar ler o
--- script decompilado e adivinhar. Também loga todo OnClientEvent que
--- chega (servidor -> client) nos remotes existentes em ReplicatedStorage.
--- Precisa que o executor suporte hookmetamethod/getrawmetatable/
--- newcclosure -- se não suportar, avisa e só faz o lado de entrada
--- (OnClientEvent), que não depende de hook nenhum.
+-- CHECKPOINT 92 -> CHECKPOINT 1 + LANDINGZONE1 -> LANDINGZONE3: mesmo
+-- toggle, dois movimentos independentes do Mega Jump Insta -- move a
+-- part do Checkpoint 92 pra cima do Checkpoint 1 E a LandingZone1 pra
+-- cima da LandingZone3 (mantendo a rotação original de cada uma), sem
+-- mexer em JumpCar, CarSpawn, CarResetZones nem criar cópias em
+-- quadrado. 100% client-side (só a SUA tela vê elas nessa posição nova).
 -- ========================================
 
-local function buildRemoteSpyFeature()
-    local MAX_ENTRIES = 200
-    local entries = {}
+local function buildCheckpoint92To1Feature()
     local enabled = false
-    local originalNamecall = nil
-    local refreshUI = nil
-    local incomingConnections = {}
+    local saved92 = nil
+    local savedLandingZone1 = nil
 
-    local function serializeValue(v)
-        local ty = typeof(v)
-        if ty == "string" then
-            return "\"" .. v .. "\""
-        elseif ty == "Instance" then
-            local ok, full = pcall(function() return v:GetFullName() end)
-            return ok and full or ("<" .. v.ClassName .. ">")
-        elseif ty == "table" then
-            local ok, encoded = pcall(function() return HttpService:JSONEncode(v) end)
-            return ok and encoded or "<table>"
-        else
-            return tostring(v)
-        end
-    end
-
-    local function addEntry(direction, remoteName, method, args)
-        local parts = {}
-        for _, v in ipairs(args) do
-            table.insert(parts, serializeValue(v))
-        end
-        local line = string.format("[%s] %s %s(%s)", direction, remoteName, method, table.concat(parts, ", "))
-
-        table.insert(entries, line)
-        if #entries > MAX_ENTRIES then
-            table.remove(entries, 1)
-        end
-
-        print("[SPY] " .. line)
-        if refreshUI then refreshUI() end
-    end
-
-    -- Só usa acesso a PROPRIEDADE (self.ClassName, self.Name, self.Parent)
-    -- aqui dentro, nunca self:Metodo(...) -- qualquer chamada de método
-    -- (mesmo IsA/GetFullName) passa de novo pelo __namecall que a gente
-    -- acabou de hookear, e como esse hook roda pra TODA chamada de método
-    -- do jogo inteiro (não só remotes), cada FireServer disparava 2-3
-    -- passagens extras por ele mesmo -- multiplicado pela frequência de
-    -- chamadas do jogo isso travava a tela bem na hora do reveal.
-    local function getPathSafe(inst)
-        local ok, result = pcall(function()
-            local names = {}
-            local cur = inst
-            local hops = 0
-            while cur and hops < 6 do
-                table.insert(names, 1, cur.Name)
-                cur = cur.Parent
-                hops = hops + 1
+    local function findCheckpointByNumber(number)
+        local folder = Workspace:FindFirstChild("Checkpoints", true)
+        if not folder then return nil end
+        local child = nil
+        for _, c in ipairs(folder:GetChildren()) do
+            if c.Name == tostring(number) then
+                child = c
+                break
             end
-            return table.concat(names, ".")
-        end)
-        return ok and result or "?"
-    end
-
-    local function hookOutgoing()
-        if typeof(hookmetamethod) ~= "function" or typeof(getrawmetatable) ~= "function" then
-            return false
         end
-
-        local ok = pcall(function()
-            local gameMeta = getrawmetatable(game)
-            local wasReadOnly = false
-            pcall(function()
-                if typeof(setreadonly) == "function" then
-                    wasReadOnly = true
-                    setreadonly(gameMeta, false)
-                end
-            end)
-
-            originalNamecall = gameMeta.__namecall
-            gameMeta.__namecall = newcclosure(function(self, ...)
-                local method = getnamecallmethod and getnamecallmethod() or ""
-                if method == "FireServer" or method == "InvokeServer" then
-                    local args = { ... }
-                    pcall(function()
-                        local className = self.ClassName
-                        if className == "RemoteEvent" or className == "RemoteFunction" then
-                            local path = getPathSafe(self)
-                            task.spawn(function()
-                                addEntry("OUT", path, method, args)
-                            end)
-                        end
-                    end)
-                end
-                return originalNamecall(self, ...)
-            end)
-
-            if wasReadOnly and typeof(setreadonly) == "function" then
-                setreadonly(gameMeta, true)
-            end
-        end)
-
-        return ok
+        if not child then return nil end
+        return child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
     end
 
-    local function unhookOutgoing()
-        if not originalNamecall then return end
-        pcall(function()
-            local gameMeta = getrawmetatable(game)
-            local wasReadOnly = false
-            pcall(function()
-                if typeof(setreadonly) == "function" then
-                    wasReadOnly = true
-                    setreadonly(gameMeta, false)
-                end
-            end)
-            gameMeta.__namecall = originalNamecall
-            if wasReadOnly and typeof(setreadonly) == "function" then
-                setreadonly(gameMeta, true)
-            end
-        end)
-        originalNamecall = nil
-    end
-
-    local function hookIncomingFor(remote)
-        if incomingConnections[remote] then return end
-        if remote:IsA("RemoteEvent") then
-            local path = getPathSafe(remote)
-            incomingConnections[remote] = remote.OnClientEvent:Connect(function(...)
-                addEntry("IN", path, "OnClientEvent", { ... })
-            end)
-        end
-    end
-
-    local function hookAllIncoming()
-        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then hookIncomingFor(obj) end
-        end
-        incomingConnections["__descendantAdded"] = ReplicatedStorage.DescendantAdded:Connect(function(obj)
-            if obj:IsA("RemoteEvent") then hookIncomingFor(obj) end
-        end)
-    end
-
-    local function unhookAllIncoming()
-        for _, conn in pairs(incomingConnections) do
-            if typeof(conn) == "RBXScriptConnection" then conn:Disconnect() end
-        end
-        incomingConnections = {}
+    local function findLandingZoneByNumber(number)
+        local direct = Workspace:FindFirstChild("LandingZone" .. number, true)
+        if not direct then return nil end
+        if direct:IsA("BasePart") then return direct end
+        return direct:FindFirstChildWhichIsA("BasePart", true)
     end
 
     local function enable()
         if enabled then return end
-        local outgoingOk = hookOutgoing()
-        hookAllIncoming()
+
+        local checkpoint92 = findCheckpointByNumber(92)
+        local checkpoint1 = findCheckpointByNumber(1)
+        local landingZone1 = findLandingZoneByNumber(1)
+        local landingZone3 = findLandingZoneByNumber(3)
+
+        if not checkpoint92 or not checkpoint1 then
+            addLog("[CHECKPOINT-92-TO-1] [!] Não achei tudo (Checkpoint92=" .. tostring(checkpoint92 ~= nil)
+                .. ", Checkpoint1=" .. tostring(checkpoint1 ~= nil) .. ")")
+            return
+        end
+
+        saved92 = { part = checkpoint92, cframe = checkpoint92.CFrame }
+
+        local rotation92 = checkpoint92.CFrame - checkpoint92.CFrame.Position
+        checkpoint92.CFrame = CFrame.new(checkpoint1.Position) * rotation92
+
+        if landingZone1 and landingZone3 then
+            savedLandingZone1 = { part = landingZone1, cframe = landingZone1.CFrame }
+            local rotationLZ = landingZone1.CFrame - landingZone1.CFrame.Position
+            landingZone1.CFrame = CFrame.new(landingZone3.Position) * rotationLZ
+            addLog("[CHECKPOINT-92-TO-1] [✓] LandingZone1 movida pra cima da LandingZone3 (só na sua tela)")
+        else
+            addLog("[CHECKPOINT-92-TO-1] [!] LandingZone1/LandingZone3 não encontradas (seguindo sem mover)")
+        end
+
         enabled = true
-        addLog("[SPY] Ativado" .. (outgoingOk and "" or " (só entrada -- executor não suporta hookmetamethod pra ver saída)"))
-        return outgoingOk
+        addLog("[CHECKPOINT-92-TO-1] [✓] Checkpoint 92 movido pra cima do Checkpoint 1 (só na sua tela)")
     end
 
     local function disable()
         if not enabled then return end
-        unhookOutgoing()
-        unhookAllIncoming()
+
+        if saved92 and saved92.part.Parent then
+            saved92.part.CFrame = saved92.cframe
+        end
+        saved92 = nil
+
+        if savedLandingZone1 and savedLandingZone1.part.Parent then
+            savedLandingZone1.part.CFrame = savedLandingZone1.cframe
+        end
+        savedLandingZone1 = nil
+
         enabled = false
-        addLog("[SPY] Desativado")
+        addLog("[CHECKPOINT-92-TO-1] Restaurado -- Checkpoint 92 e LandingZone1 de volta pro lugar original")
     end
 
-    local function clear()
-        entries = {}
-        if refreshUI then refreshUI() end
-    end
-
-    local function getLogText()
-        return table.concat(entries, "\n")
+    local function toggle()
+        if enabled then disable() else enable() end
+        return enabled
     end
 
     return {
-        enable = enable,
-        disable = disable,
-        clear = clear,
-        getLogText = getLogText,
+        toggle = toggle,
         isEnabled = function() return enabled end,
-        setRefreshCallback = function(fn) refreshUI = fn end,
     }
 end
 
-local RemoteSpy = buildRemoteSpyFeature()
+local Checkpoint92To1 = buildCheckpoint92To1Feature()
 
 -- ========================================
--- FUNCTION SPY: em vez de reimplementar a lógica do checkpoint por conta
--- própria (como fizemos no CheckpointDup, que não funcionou), isso aqui
--- captura a FUNÇÃO REAL que o próprio jogo conectou no Touched de um
--- checkpoint -- via getconnections(part.Touched), que devolve as
--- conexões existentes com a referência pra função real (.Function).
--- Assim dá pra chamar o EXATO mesmo código do jogo manualmente, com
--- qualquer part que a gente quiser passar como "hit", sem ter que
--- adivinhar a lógica interna dele. Precisa de getconnections com suporte
--- a .Function -- Wave e a maioria dos executores completos têm.
+-- MINI PARKOUR - LOOP AUTOMÁTICO (igual o ciclo do Mega Ramp, aba Ramp):
+-- teleporta até o MiniParkourEnter/MiniParkourPrompt (achado pelo
+-- usuário no Explorer do Studio), dispara o prompt pra abrir a sessão
+-- (LoadParkour), dispara MiniParkourEvent:FireServer("CheckpointTouched",
+-- número) em sequência pra cada checkpoint (reaproveitando a MESMA
+-- ação/remote que o CheckpointDup já usa fisicamente), espera o
+-- FinishMessage (ou um timeout de segurança) e repete sozinho até
+-- PARAR -- igual startMasterCycle/stopMasterCycle faz com o JumpCar.
 -- ========================================
 
-local function buildFunctionSpyFeature()
-    local capturedFn = nil
-    local capturedFrom = nil
-    local capturedKind = nil -- "touched" ou "remote" -- muda a assinatura de argumentos ao chamar
+local miniParkourLoadedFlag = false
+local miniParkourFinishedFlag = false
 
-    -- Monta um relatório de texto com tudo que dá pra descobrir sobre a
-    -- função capturada (via debug.getinfo -- source, linha, número de
-    -- upvalues/params, se é vararg) e copia pro clipboard, igual o
-    -- Remote Spy já faz com o log -- assim dá pra colar aqui na
-    -- conversa sem precisar copiar do console manualmente.
-    local function buildCaptureReport(checkpointName, fn)
-        local lines = {
-            "=== FUNCTION SPY: checkpoint '" .. tostring(checkpointName) .. "' ===",
-        }
-
-        local infoOk, info = pcall(debug.getinfo, fn)
-        if infoOk and info then
-            table.insert(lines, "source: " .. tostring(info.source))
-            table.insert(lines, "short_src: " .. tostring(info.short_src))
-            table.insert(lines, "linedefined: " .. tostring(info.linedefined))
-            table.insert(lines, "currentline: " .. tostring(info.currentline))
-            table.insert(lines, "what: " .. tostring(info.what))
-            table.insert(lines, "nparams: " .. tostring(info.nparams))
-            table.insert(lines, "is_vararg: " .. tostring(info.is_vararg))
-        else
-            table.insert(lines, "[!] debug.getinfo indisponível ou falhou")
+if Remotes.miniParkourEvent then
+    Remotes.miniParkourEvent.OnClientEvent:Connect(function(kind)
+        if kind == "LoadParkour" then
+            miniParkourLoadedFlag = true
+        elseif kind == "FinishMessage" then
+            miniParkourFinishedFlag = true
         end
+    end)
+end
 
-        if typeof(debug.getupvalues) == "function" then
-            local upOk, ups = pcall(debug.getupvalues, fn)
-            if upOk and ups then
-                table.insert(lines, "upvalues (" .. #ups .. "):")
-                for i, v in ipairs(ups) do
-                    table.insert(lines, "  [" .. i .. "] " .. typeof(v) .. " = " .. tostring(v))
-                end
-            end
+local function findMiniParkourPrompt()
+    local enterPart = Workspace:FindFirstChild("MiniParkourEnter", true)
+    if enterPart then
+        local prompt = enterPart:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt then return prompt end
+    end
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") and obj.Name == "MiniParkourPrompt" then return obj end
+    end
+    return nil
+end
+
+local function buildMiniParkourShortcutFeature()
+    local running = false
+    local config = { startCheckpoint = 1, endCheckpoint = 32, delaySeconds = 1.5 }
+    local statusLabel = nil
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
         end
-
-        if typeof(decompile) == "function" then
-            local decOk, source = pcall(decompile, fn)
-            if decOk and source then
-                table.insert(lines, "--- decompile ---")
-                table.insert(lines, tostring(source))
-            end
-        end
-
-        return table.concat(lines, "\n")
     end
 
-    local function tryCaptureFromSignal(sourceName, signal, kind)
-        local ok, conns = pcall(getconnections, signal)
-        if not ok or not conns then return false end
-
-        for _, conn in ipairs(conns) do
-            local fn = conn.Function
-            if fn then
-                capturedFn = fn
-                capturedFrom = sourceName
-                capturedKind = kind
-
-                local report = buildCaptureReport(sourceName, fn)
-                print("[FN-SPY]\n" .. report)
-
-                if typeof(setclipboard) == "function" then
-                    local copied = pcall(setclipboard, report)
-                    addLog(copied
-                        and ("[FN-SPY] Função capturada de '" .. sourceName .. "' -- info copiada pro clipboard!")
-                        or ("[FN-SPY] Função capturada, mas setclipboard falhou -- veja no console"))
-                else
-                    addLog("[FN-SPY] Função capturada de '" .. sourceName .. "' -- esse executor não suporta setclipboard, veja no console")
-                end
-
-                return true
-            end
-        end
-
-        return false
-    end
-
-    -- O "Checkpoint UI: 48 x6000..." que aparece no console NÃO vem de
-    -- um Touched físico -- é o próprio sistema de sorte da rampa, guiado
-    -- 100% pelo remote CheckpointLuckUpdate (confirmado no Remote Spy:
-    -- só aparecem entradas [IN] pra ele, nunca Touched). Por isso captura
-    -- primeiro nos remotes que a gente sabe que disparam de verdade
-    -- (igual o SimpleSpy faz -- getconnections funciona em OnClientEvent
-    -- do mesmo jeito que em Touched), e só cai pro Touched dos
-    -- checkpoints como último recurso, caso o jogo mude de novo.
-    local function captureCheckpointTouched()
-        if typeof(getconnections) ~= "function" then
-            addLog("[FN-SPY] [!] getconnections não suportado nesse executor")
+    local function runOneCycle()
+        local prompt = findMiniParkourPrompt()
+        if not prompt then
+            addLog("[MINI-PARKOUR] [!] MiniParkourPrompt não encontrado (MiniParkourEnter)")
             return false
         end
 
-        local remoteCandidates = { "CheckpointLuckUpdate", "JumpLuckStart", "JumpLuckEnd" }
-        for _, name in ipairs(remoteCandidates) do
-            local remote = findRemote(name)
-            if remote then
-                if tryCaptureFromSignal(name .. ".OnClientEvent", remote.OnClientEvent, "remote") then
-                    return true
-                end
+        local promptPos = getPromptWorldPosition(prompt)
+        local originalCFrame = nil
+        if promptPos then
+            originalCFrame = teleportPlayerTo(promptPos)
+            task.wait(0.3)
+        end
+
+        miniParkourLoadedFlag = false
+        local fired = triggerPromptGeneric(prompt)
+        if not fired then
+            addLog("[MINI-PARKOUR] [!] Não consegui disparar o MiniParkourPrompt")
+            teleportPlayerBack(originalCFrame)
+            return false
+        end
+
+        setStatus("Status: ABRINDO SESSÃO...", Color3.fromRGB(255, 200, 0))
+        local loadStart = tick()
+        while running and not miniParkourLoadedFlag and (tick() - loadStart) < 10 do
+            task.wait(0.1)
+        end
+
+        if not miniParkourLoadedFlag then
+            addLog("[MINI-PARKOUR] [!] Timeout esperando LoadParkour -- tentando de novo no próximo ciclo")
+            teleportPlayerBack(originalCFrame)
+            return false
+        end
+
+        addLog("[MINI-PARKOUR] [✓] Sessão aberta, disparando checkpoints...")
+
+        miniParkourFinishedFlag = false
+        local first = math.floor(config.startCheckpoint)
+        local last = math.floor(config.endCheckpoint)
+
+        for number = first, last do
+            if not running then break end
+            if miniParkourFinishedFlag then break end
+            pcall(function() Remotes.miniParkourEvent:FireServer("CheckpointTouched", number) end)
+            addLog("[MINI-PARKOUR] Checkpoint " .. number .. "/" .. last .. " disparado")
+            setStatus("Status: RODANDO (" .. number .. "/" .. last .. ")", Color3.fromRGB(255, 200, 0))
+            task.wait(config.delaySeconds)
+        end
+
+        if running and not miniParkourFinishedFlag then
+            local finishStart = tick()
+            while running and not miniParkourFinishedFlag and (tick() - finishStart) < 8 do
+                task.wait(0.1)
             end
         end
 
-        local folder = Workspace:FindFirstChild("Checkpoints", true)
-        if folder then
-            for _, child in ipairs(folder:GetChildren()) do
-                local part = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
-                if part then
-                    if tryCaptureFromSignal(child.Name .. ".Touched", part.Touched, "touched") then
-                        return true
-                    end
-                end
-            end
-        end
-
-        addLog("[FN-SPY] [!] Nenhuma conexão encontrada (nem nos remotes de sorte, nem nos checkpoints Touched)")
-        return false
+        addLog(miniParkourFinishedFlag and "[MINI-PARKOUR] [✓] Parkour concluído!" or "[MINI-PARKOUR] [!] Não confirmei o FinishMessage, seguindo mesmo assim")
+        teleportPlayerBack(originalCFrame)
+        return true
     end
 
-    -- A função capturada de um REMOTE (OnClientEvent) recebe os MESMOS
-    -- argumentos que o servidor mandou no evento -- pra CheckpointLuckUpdate
-    -- isso é (isJackpot: boolean, luckValue: number, ...), NUNCA uma part
-    -- de Touched. Passar o carro como argumento aqui é o que causava
-    -- "invalid argument #2 to 'max' (number expected, got Instance)".
-    -- Chamamos manualmente com um valor de sorte gigante só pra ver o que
-    -- essa função faz com ele (ex: se só atualiza um LuckValue LOCAL/visual,
-    -- ou se dispara algo mais) -- é 100% client-side, não manda nada pro
-    -- servidor por conta própria (quem manda pro servidor é outro remote).
-    local function callCapturedWithCar()
-        if not capturedFn then
-            addLog("[FN-SPY] [!] Capture a função primeiro")
+    local function loopBody()
+        while running do
+            runOneCycle()
+            if not running then break end
+            setStatus("Status: RODANDO (reiniciando ciclo)", Color3.fromRGB(255, 200, 0))
+            task.wait(2)
+        end
+        setStatus("Status: PARADO", Color3.fromRGB(100, 200, 100))
+        addLog("[MINI-PARKOUR] === LOOP FINALIZADO ===")
+    end
+
+    local function start()
+        if running then return end
+        if not Remotes.miniParkourEvent then
+            addLog("[MINI-PARKOUR] [!] MiniParkourEvent não encontrado")
             return
         end
-
-        local ok, err
-        if capturedKind == "remote" then
-            -- Primeira tentativa (isJackpot=true, luckValue=numero) deu
-            -- "argument #2 to 'max' (number expected, got boolean)" -- ou
-            -- seja o 2º parâmetro TAMBÉM precisa ser número. O formato do
-            -- print do próprio jogo ("Checkpoint UI: 48 x6000") sugere que
-            -- a assinatura real é (index: number, luckValue: number).
-            local testIndex, testValue = 1, 999999999
-            ok, err = pcall(capturedFn, testIndex, testValue)
-            addLog("[FN-SPY] Chamando função de remote com (index=" .. testIndex .. ", luckValue=" .. testValue .. ") -- teste 100% local, não afeta o servidor")
-        else
-            local car = findPlayerCarModel()
-            local hitPart = car and (car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true))
-            if not hitPart then
-                addLog("[FN-SPY] [!] Carro não encontrado -- entre no carro primeiro")
-                return
-            end
-            ok, err = pcall(capturedFn, hitPart)
-        end
-
-        local resultText = ok
-            and ("=== FUNCTION SPY: chamada de '" .. tostring(capturedFrom) .. "' ===\nSucesso -- sem erro retornado.")
-            or ("=== FUNCTION SPY: chamada de '" .. tostring(capturedFrom) .. "' ===\nErro: " .. tostring(err))
-
-        print("[FN-SPY]\n" .. resultText)
-
-        if typeof(setclipboard) == "function" then
-            local copied = pcall(setclipboard, resultText)
-            addLog((ok and "[FN-SPY] [✓] Função real chamada com sucesso" or "[FN-SPY] [!] Erro ao chamar a função real: " .. tostring(err))
-                .. (copied and " -- resultado copiado pro clipboard!" or " -- setclipboard falhou, veja no console"))
-        else
-            addLog(ok and "[FN-SPY] [✓] Função real chamada com sucesso (executor sem setclipboard, veja no console)"
-                or "[FN-SPY] [!] Erro ao chamar a função real: " .. tostring(err))
-        end
+        running = true
+        addLog("[MINI-PARKOUR] === LOOP INICIADO === (checkpoints " .. config.startCheckpoint .. " a " .. config.endCheckpoint .. ", " .. config.delaySeconds .. "s entre cada)")
+        task.spawn(loopBody)
     end
 
-    return {
-        capture = captureCheckpointTouched,
-        callWithCar = callCapturedWithCar,
-        hasCaptured = function() return capturedFn ~= nil end,
-    }
-end
-
-local FunctionSpy = buildFunctionSpyFeature()
-
--- ========================================
--- PROPS LOCAIS: spawnar/clonar/grudar/segurar objetos onde você olha --
--- 100% client-side (LocalScript não tem canal de rede pra replicar
--- Instance criada por ele pra outros clients nem pro servidor), então só
--- APARECE NA SUA TELA. Bom pra brincar sozinho, gravar clipe, testar
--- cena -- não é visível pros outros jogadores.
--- ========================================
-
--- Tudo isso vai dentro de uma função própria só pra economizar registros
--- de variável local do chunk principal (mesmo motivo do setupMenu() lá
--- embaixo) -- só o necessário sai pra fora, dentro da tabela Props.
-local function buildPropsFeature()
-    local propsFolder = Instance.new("Folder")
-    propsFolder.Name = "HubLocalProps"
-    propsFolder.Parent = Workspace
-
-    local config = { spawnDistance = 50, selected = nil, carrying = false, holdDistance = 8 }
-    local statusLabel = nil
-    local propHighlight = nil
-
-    local function castLookRay(maxDistance, extraIgnore)
-        local camera = Workspace.CurrentCamera
-        local origin = camera.CFrame.Position
-        local direction = camera.CFrame.LookVector * (maxDistance or 500)
-
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        local ignore = {}
-        if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
-        if extraIgnore then
-            for _, obj in ipairs(extraIgnore) do table.insert(ignore, obj) end
-        end
-        params.FilterDescendantsInstances = ignore
-
-        return Workspace:Raycast(origin, direction, params)
+    local function stop()
+        if not running then return end
+        running = false
+        addLog("[MINI-PARKOUR] [!] Parando...")
     end
-
-    -- Flecha/mira fixa no centro da tela, pra saber exatamente o que vai
-    -- ser clonado/grudado/movido antes de clicar -- também 100% local.
-    local crosshairGui = Instance.new("ScreenGui")
-    crosshairGui.Name = "HubCrosshair"
-    crosshairGui.ResetOnSpawn = false
-    crosshairGui.DisplayOrder = 998
-    crosshairGui.IgnoreGuiInset = true
-    crosshairGui.Parent = playerGui
-
-    local crosshairLabel = Instance.new("TextLabel")
-    crosshairLabel.Name = "Arrow"
-    crosshairLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-    crosshairLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
-    crosshairLabel.Size = UDim2.new(0, 24, 0, 24)
-    crosshairLabel.BackgroundTransparency = 1
-    crosshairLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
-    crosshairLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    crosshairLabel.TextStrokeTransparency = 0
-    crosshairLabel.TextScaled = true
-    crosshairLabel.Font = Enum.Font.GothamBold
-    crosshairLabel.Text = "▼"
-    crosshairLabel.Parent = crosshairGui
-
-    local function getSelectedPrimaryPart()
-        local selected = config.selected
-        if not selected or not selected.Parent then return nil end
-        if selected:IsA("Model") then
-            return selected.PrimaryPart or selected:FindFirstChildWhichIsA("BasePart", true)
-        elseif selected:IsA("BasePart") then
-            return selected
-        end
-        return nil
-    end
-
-    local function selectProp(instance)
-        if propHighlight then
-            propHighlight:Destroy()
-            propHighlight = nil
-        end
-        config.selected = instance
-        config.carrying = false
-
-        if instance then
-            local hl = Instance.new("Highlight")
-            hl.Name = "HubPropHighlight"
-            hl.FillColor = Color3.fromRGB(0, 200, 255)
-            hl.FillTransparency = 0.6
-            hl.OutlineColor = Color3.fromRGB(0, 200, 255)
-            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            hl.Parent = instance
-            propHighlight = hl
-
-            if statusLabel then
-                statusLabel.Text = t("label_selected") .. instance.Name
-                statusLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
-            end
-        elseif statusLabel then
-            statusLabel.Text = t("label_none_selected")
-            statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-        end
-    end
-
-    local function cloneLookedAt()
-        local hit = castLookRay(config.spawnDistance, { propsFolder })
-        if not hit or not hit.Instance then
-            addLog("[PROPS] [!] Nada na mira pra clonar")
-            return
-        end
-
-        local target = hit.Instance
-        local model = target:FindFirstAncestorOfClass("Model")
-        local sourceToClone = model or target
-
-        local ok, clone = pcall(function() return sourceToClone:Clone() end)
-        if not ok or not clone then
-            addLog("[PROPS] [!] Não consegui clonar esse objeto")
-            return
-        end
-
-        if clone:IsA("Model") then
-            for _, d in ipairs(clone:GetDescendants()) do
-                if d:IsA("BasePart") then d.Anchored = true d.CanCollide = false end
-            end
-            local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
-            if primary then
-                clone:PivotTo(CFrame.new(hit.Position))
-            end
-            clone.Parent = propsFolder
-            selectProp(primary or clone)
-        elseif clone:IsA("BasePart") then
-            clone.Anchored = true
-            clone.CanCollide = false
-            clone.Position = hit.Position
-            clone.Parent = propsFolder
-            selectProp(clone)
-        else
-            clone:Destroy()
-            addLog("[PROPS] [!] Objeto não clonável (não é Part/Model)")
-            return
-        end
-
-        addLog("[PROPS] Clonado: " .. target.Name)
-    end
-
-    local function attachSelectedToLookTarget()
-        local primary = getSelectedPrimaryPart()
-        if not primary then
-            addLog("[PROPS] [!] Nenhum objeto selecionado")
-            return
-        end
-        local hit = castLookRay(config.spawnDistance, { propsFolder })
-        if not hit or not hit.Instance then
-            addLog("[PROPS] [!] Nada na mira pra grudar")
-            return
-        end
-        local targetPart = hit.Instance:IsA("BasePart") and hit.Instance or hit.Instance:FindFirstAncestorWhichIsA("BasePart")
-        if not targetPart then
-            addLog("[PROPS] [!] Não achei uma parte sólida na mira")
-            return
-        end
-
-        local existing = primary:FindFirstChild("HubPropWeld")
-        if existing then existing:Destroy() end
-
-        primary.Position = hit.Position
-        primary.Anchored = false
-
-        local weld = Instance.new("WeldConstraint")
-        weld.Name = "HubPropWeld"
-        weld.Part0 = primary
-        weld.Part1 = targetPart
-        weld.Parent = primary
-
-        addLog("[PROPS] Grudado em " .. targetPart.Name)
-    end
-
-    local function detachSelected()
-        local primary = getSelectedPrimaryPart()
-        if not primary then return end
-        local existing = primary:FindFirstChild("HubPropWeld")
-        if existing then existing:Destroy() end
-        addLog("[PROPS] Solto")
-    end
-
-    local function toggleAnchorSelected()
-        local primary = getSelectedPrimaryPart()
-        if not primary then
-            addLog("[PROPS] [!] Nenhum objeto selecionado")
-            return
-        end
-        primary.Anchored = not primary.Anchored
-        addLog("[PROPS] " .. (primary.Anchored and "Ancorado" or "Solto (física ligada)"))
-    end
-
-    local function scaleSelected(multiplier)
-        local primary = getSelectedPrimaryPart()
-        if not primary then
-            addLog("[PROPS] [!] Nenhum objeto selecionado")
-            return
-        end
-        primary.Size = primary.Size * multiplier
-    end
-
-    local function deleteSelected()
-        local selected = config.selected
-        if not selected then
-            addLog("[PROPS] [!] Nenhum objeto selecionado")
-            return
-        end
-        selectProp(nil)
-        selected:Destroy()
-        addLog("[PROPS] Deletado")
-    end
-
-    local function clearAllProps()
-        selectProp(nil)
-        propsFolder:ClearAllChildren()
-        addLog("[PROPS] Tudo limpo")
-    end
-
-    local selectModeEnabled = false
-
-    local function toggleSelectMode()
-        selectModeEnabled = not selectModeEnabled
-        addLog("[PROPS] Modo seleção " .. (selectModeEnabled and "ATIVADO (clique num objeto clonado)" or "DESATIVADO"))
-        return selectModeEnabled
-    end
-
-    UserInputService.InputBegan:Connect(function(input, processed)
-        if processed then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        if not selectModeEnabled then return end
-
-        local hit = castLookRay(config.spawnDistance * 3)
-        if hit and hit.Instance and hit.Instance:IsDescendantOf(propsFolder) then
-            selectProp(hit.Instance)
-        end
-    end)
-
-    local function toggleCarry()
-        if not config.selected then
-            addLog("[PROPS] [!] Nenhum objeto selecionado")
-            return
-        end
-        config.carrying = not config.carrying
-        addLog("[PROPS] Segurando: " .. tostring(config.carrying))
-    end
-
-    RunService.Heartbeat:Connect(function()
-        if not config.carrying then return end
-        local primary = getSelectedPrimaryPart()
-        if not primary then
-            config.carrying = false
-            return
-        end
-        primary.Anchored = true
-        local camera = Workspace.CurrentCamera
-        local holdCFrame = camera.CFrame * CFrame.new(0, 0, -config.holdDistance)
-        local selected = config.selected
-        if selected:IsA("Model") then
-            selected:PivotTo(holdCFrame)
-        else
-            primary.CFrame = holdCFrame
-        end
-    end)
 
     return {
         config = config,
-        crosshairLabel = crosshairLabel,
+        start = start,
+        stop = stop,
+        isRunning = function() return running end,
         setStatusLabel = function(lbl) statusLabel = lbl end,
-        clone = cloneLookedAt,
-        attach = attachSelectedToLookTarget,
-        detach = detachSelected,
-        toggleAnchor = toggleAnchorSelected,
-        scale = scaleSelected,
-        delete = deleteSelected,
-        clearAll = clearAllProps,
-        toggleSelectMode = toggleSelectMode,
-        toggleCarry = toggleCarry,
     }
 end
 
-local Props = buildPropsFeature()
+local MiniParkourShortcut = buildMiniParkourShortcutFeature()
 
 -- ========================================
--- HORÁRIO (DIA/NOITE): Lighting.ClockTime replica DO SERVIDOR pro client
--- normalmente, mas o client pode sobrescrever localmente -- também só
--- aparece pra você. Se o jogo tiver um ciclo dia/noite rodando no
--- servidor, ele vai ficar tentando voltar o valor, então reaplicamos
--- sozinhos toda vez que ele mudar (enquanto ATIVADO).
+-- AJUSTE DO JUMPCAR (REMOVIDO): a ideia era reduzir a força do impulso
+-- via Attributes do JumpCar e/ou aumentar a Density do carro pra ele não
+-- pular tão longe -- mas analisando megaramp_event_loop.lua, o
+-- lançamento do JumpCar NÃO é físico/local: o servidor calcula o
+-- launchVector inteiro e manda pronto via ClientCarLaunch:FireClient(...)
+-- (veja waitForLaunchArgs). Como quem decide "quão longe" é o servidor,
+-- ANTES do client saber que o pulo vai acontecer, mudar Attributes ou
+-- Density localmente não tem efeito nenhum no cálculo -- por isso essa
+-- feature foi removida (confirmado pelo usuário: "mudou nada").
 -- ========================================
 
-local timeOfDayConfig = { enabled = false, clockTime = 14 }
-
-local function applyTimeOfDay()
-    if not timeOfDayConfig.enabled then return end
-    Lighting.ClockTime = timeOfDayConfig.clockTime
-end
-
--- Antes isso escutava GetPropertyChangedSignal("ClockTime") e reescrevia
--- o valor de dentro do próprio handler -- se o jogo também tem um ciclo
--- dia/noite rodando no servidor, isso vira um vaivém (nosso handler
--- dispara o evento de novo, que dispara o handler de novo...) que o
--- Roblox corta sozinho com "Exponential deferred event growth detected".
--- Um polling simples no Heartbeat evita esse loop de evento-dentro-de-
--- evento por completo.
-RunService.Heartbeat:Connect(function()
-    if timeOfDayConfig.enabled and math.abs(Lighting.ClockTime - timeOfDayConfig.clockTime) > 0.05 then
-        applyTimeOfDay()
-    end
-end)
-
 -- ========================================
--- CLIMA: o jogo não tem sistema de clima nenhum (sem chuva/tempestade/
--- neblina/neve -- conferido, não existe nada assim no código), então
--- isso aqui é construído do zero, 100% local (só na sua tela, ninguém
--- mais vê) -- Atmosphere pra neblina/densidade, ParticleEmitter presa
--- numa part que segue a câmera pra chuva/neve/areia, e um flash de
--- PointLight + som pra trovão na tempestade.
+-- QUEDA RÁPIDA: já que o lançamento em si vem pronto do servidor (não dá
+-- pra reduzir a distância do voo), a alternativa que FUNCIONA é acelerar
+-- a QUEDA depois que o pulo já aconteceu -- durante o voo, a física do
+-- carro roda com você tendo NetworkOwnership dele (é por isso que o
+-- Impulso da Pista já consegue mexer em AssemblyLinearVelocity local e
+-- funcionar de verdade), então dá pra somar uma velocidade extra pra
+-- baixo todo Heartbeat, igual o Impulso da Pista faz pra frente. Como a
+-- gravidade no Roblox não depende de massa (igual física real), isso é
+-- diferente de "deixar mais pesado" (que não fazia nada) -- aqui é
+-- literalmente adicionar aceleração extra pra baixo. Enquanto o carro
+-- está no chão, a colisão normal do próprio jogo cancela essa velocidade
+-- sozinha, então não atrapalha dirigir normalmente.
 -- ========================================
 
-local function buildWeatherFeature()
-    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
-    if not atmosphere then
-        atmosphere = Instance.new("Atmosphere")
-        atmosphere.Parent = Lighting
-    end
-    local defaultAtmosphere = {
-        Density = atmosphere.Density,
-        Offset = atmosphere.Offset,
-        Color = atmosphere.Color,
-        Decay = atmosphere.Decay,
-        Glare = atmosphere.Glare,
-        Haze = atmosphere.Haze,
-    }
+local function buildExtraGravityFeature()
+    local enabled = false
+    local connection = nil
+    local config = { extraGravity = 50 }
+    local statusLabel = nil
 
-    local followPart = Instance.new("Part")
-    followPart.Name = "HubWeatherFollow"
-    followPart.Anchored = true
-    followPart.CanCollide = false
-    followPart.CanTouch = false
-    followPart.CanQuery = false
-    followPart.Transparency = 1
-    followPart.Size = Vector3.new(1, 1, 1)
-    followPart.Parent = Workspace
-
-    local emitter = Instance.new("ParticleEmitter")
-    emitter.Name = "HubWeatherEmitter"
-    emitter.Enabled = false
-    emitter.Rate = 0
-    emitter.Parent = followPart
-
-    local followConn = RunService.RenderStepped:Connect(function()
-        local camera = Workspace.CurrentCamera
-        followPart.CFrame = camera.CFrame + camera.CFrame.LookVector * 40 + Vector3.new(0, 25, 0)
-    end)
-
-    local currentPreset = "clear"
-
-    local function stopThunder()
-        -- o loop de trovão checa `currentPreset == "storm"` a cada
-        -- iteração e se auto-encerra quando o preset muda, então só
-        -- precisamos garantir que currentPreset já não seja mais "storm"
-        -- antes de chamar isso (feito em applyPreset logo no início).
-    end
-
-    local function flashThunder()
-        local camera = Workspace.CurrentCamera
-        local flash = Instance.new("ColorCorrectionEffect")
-        flash.Name = "HubThunderFlash"
-        flash.Brightness = 0.6
-        flash.Parent = Lighting
-
-        local sound = Instance.new("Sound")
-        sound.SoundId = "rbxasset://sounds/impact_water.mp3"
-        sound.Volume = 0.6
-        sound.Parent = camera
-        pcall(function() sound:Play() end)
-
-        task.delay(0.15, function()
-            if flash.Parent then flash:Destroy() end
-        end)
-        task.delay(3, function()
-            if sound.Parent then sound:Destroy() end
-        end)
-    end
-
-    local function configureEmitter(shape, color, size, speed, rate, lifetime, rotSpeed)
-        emitter.Texture = shape
-        emitter.Color = ColorSequence.new(color)
-        emitter.Size = NumberSequence.new(size)
-        emitter.Speed = NumberRange.new(speed[1], speed[2])
-        emitter.Rate = rate
-        emitter.Lifetime = NumberRange.new(lifetime[1], lifetime[2])
-        emitter.RotSpeed = NumberRange.new(rotSpeed[1], rotSpeed[2])
-        emitter.SpreadAngle = Vector2.new(60, 60)
-        emitter.Enabled = true
-    end
-
-    local function applyPreset(name, statusLabel)
-        currentPreset = name
-        stopThunder()
-        emitter.Enabled = false
-
-        if name == "clear" then
-            atmosphere.Density = defaultAtmosphere.Density
-            atmosphere.Offset = defaultAtmosphere.Offset
-            atmosphere.Color = defaultAtmosphere.Color
-            atmosphere.Decay = defaultAtmosphere.Decay
-            atmosphere.Glare = defaultAtmosphere.Glare
-            atmosphere.Haze = defaultAtmosphere.Haze
-        elseif name == "rain" then
-            atmosphere.Density = 0.35
-            atmosphere.Haze = 1.5
-            atmosphere.Color = Color3.fromRGB(150, 160, 170)
-            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(200, 210, 230), 1.2, { 60, 80 }, 300, { 0.6, 0.9 }, { 0, 0 })
-        elseif name == "storm" then
-            atmosphere.Density = 0.55
-            atmosphere.Haze = 3
-            atmosphere.Color = Color3.fromRGB(90, 95, 110)
-            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(180, 190, 210), 1.6, { 90, 120 }, 600, { 0.4, 0.7 }, { 0, 0 })
-            task.spawn(function()
-                while currentPreset == "storm" do
-                    task.wait(math.random(4, 10))
-                    if currentPreset == "storm" then flashThunder() end
-                end
-            end)
-        elseif name == "fog" then
-            atmosphere.Density = 0.7
-            atmosphere.Offset = 0.1
-            atmosphere.Haze = 4
-            atmosphere.Color = Color3.fromRGB(200, 200, 205)
-        elseif name == "snow" then
-            atmosphere.Density = 0.3
-            atmosphere.Haze = 1
-            atmosphere.Color = Color3.fromRGB(210, 220, 235)
-            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(255, 255, 255), 2, { 8, 15 }, 150, { 3, 5 }, { -30, 30 })
-        elseif name == "sandstorm" then
-            atmosphere.Density = 0.6
-            atmosphere.Haze = 3.5
-            atmosphere.Color = Color3.fromRGB(190, 150, 90)
-            configureEmitter("rbxasset://textures/particle.dds", Color3.fromRGB(200, 165, 100), 4, { 40, 70 }, 200, { 1, 2 }, { -10, 10 })
-        end
-
+    local function setStatus(text, color)
         if statusLabel then
-            statusLabel.Text = "Status: " .. name:upper()
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
         end
-        addLog("[CLIMA] Aplicado: " .. name)
+    end
+
+    local function step(dt)
+        local car = findPlayerCarModel()
+        local carPart = car and (car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true))
+        if not carPart then return end
+        carPart.AssemblyLinearVelocity = carPart.AssemblyLinearVelocity - Vector3.new(0, config.extraGravity * dt, 0)
+    end
+
+    local function enable()
+        if enabled then return end
+        enabled = true
+        connection = RunService.Heartbeat:Connect(step)
+        setStatus("Status: ATIVO (+" .. config.extraGravity .. " studs/s²)", Color3.fromRGB(0, 220, 220))
+        addLog("[QUEDA-RAPIDA] [✓] Ativado -- +" .. config.extraGravity .. " studs/s² de gravidade extra enquanto no ar")
+    end
+
+    local function disable()
+        if not enabled then return end
+        enabled = false
+        if connection then
+            connection:Disconnect()
+            connection = nil
+        end
+        setStatus("Status: DESLIGADO", Color3.fromRGB(100, 200, 100))
+        addLog("[QUEDA-RAPIDA] Desativado")
+    end
+
+    local function toggle()
+        if enabled then disable() else enable() end
+        return enabled
     end
 
     return {
-        applyPreset = applyPreset,
+        config = config,
+        toggle = toggle,
+        isEnabled = function() return enabled end,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
     }
 end
 
-local Weather = buildWeatherFeature()
+local ExtraGravity = buildExtraGravityFeature()
+
 
 -- ========================================
 -- ANIMAÇÕES CUSTOM: edita os IDs de idle/andar/correr DENTRO do script
@@ -3460,6 +3038,8 @@ local Weather = buildWeatherFeature()
 -- vez de forçar uma animação por cima de tudo -- assim pular/etc continua
 -- normal, só idle/andar/correr trocam.
 -- ========================================
+
+local function buildAnimFeature()
 
 local animConfig = {
     enabled = false,
@@ -3608,205 +3188,35 @@ local function getCurrentPlayingAnimId()
     return nil
 end
 
--- ========================================
--- MENU: painel único responsivo com abas
---
--- Tudo isso vai dentro de uma função própria (chamada logo em seguida) só
--- por causa de um limite real do Luau: uma única função só aceita até 200
--- variáveis locais, e o resto do script (CORE) sozinho já usa quase todas.
--- Como essa função continua definida no mesmo lugar do arquivo, ela ainda
--- enxerga e escreve normalmente em tudo que já existia antes (rampStatusLabel,
--- alertKeywords, etc.) -- só isola o REGISTRO das variáveis daqui de dentro.
--- ========================================
-
-local function setupMenu()
-
-local hubCamera = Workspace.CurrentCamera
-
--- Reconstrói do zero (troca de idioma chama setupMenu() de novo) --
--- destrói a instância anterior antes de criar a nova.
-local oldGui = playerGui:FindFirstChild("MegaRampHub")
-if oldGui then oldGui:Destroy() end
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "MegaRampHub"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 999
-screenGui.IgnoreGuiInset = true
-screenGui.Parent = playerGui
-
-local TITLE_HEIGHT = 34
-local SIDEBAR_WIDTH = 128
-
-local frame = Instance.new("Frame")
-frame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-frame.BorderSizePixel = 0
-frame.Position = lastFramePosition
-frame.Draggable = true
-frame.Active = true
-frame.ClipsDescendants = true
-frame.Parent = screenGui
-
-frame:GetPropertyChangedSignal("Position"):Connect(function()
-    lastFramePosition = frame.Position
-end)
-
-local outline = Instance.new("UIStroke")
-outline.Color = Color3.fromRGB(70, 120, 200)
-outline.Thickness = 1
-outline.Transparency = 0.3
-outline.Parent = frame
-
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, TITLE_HEIGHT)
-titleBar.BackgroundColor3 = Color3.fromRGB(32, 34, 44)
-titleBar.BorderSizePixel = 0
-titleBar.Parent = frame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -40, 1, 0)
-title.Position = UDim2.new(0, 12, 0, 0)
-title.BackgroundTransparency = 1
-title.TextColor3 = Color3.fromRGB(120, 190, 255)
-title.TextSize = 13
-title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "MEGA RAMP HUB"
-title.Parent = titleBar
-
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Size = UDim2.new(0, 32, 0, TITLE_HEIGHT)
-minimizeBtn.Position = UDim2.new(1, -32, 0, 0)
-minimizeBtn.BackgroundTransparency = 1
-minimizeBtn.TextColor3 = Color3.new(1, 1, 1)
-minimizeBtn.TextSize = 16
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.Text = "—"
-minimizeBtn.Parent = titleBar
-
-local body = Instance.new("Frame")
-body.Position = UDim2.new(0, 0, 0, TITLE_HEIGHT)
-body.Size = UDim2.new(1, 0, 1, -TITLE_HEIGHT)
-body.BackgroundTransparency = 1
-body.Parent = frame
-
-local tabBar = Instance.new("ScrollingFrame")
-tabBar.Size = UDim2.new(0, SIDEBAR_WIDTH, 1, 0)
-tabBar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-tabBar.BorderSizePixel = 0
-tabBar.ScrollBarThickness = 3
-tabBar.CanvasSize = UDim2.new(0, 0, 0, 0)
-tabBar.AutomaticCanvasSize = Enum.AutomaticSize.Y
-tabBar.Parent = body
-
-local tabBarLayout = Instance.new("UIListLayout")
-tabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tabBarLayout.Padding = UDim.new(0, 2)
-tabBarLayout.Parent = tabBar
-
-local contentArea = Instance.new("Frame")
-contentArea.Position = UDim2.new(0, SIDEBAR_WIDTH, 0, 0)
-contentArea.Size = UDim2.new(1, -SIDEBAR_WIDTH, 1, 0)
-contentArea.BackgroundTransparency = 1
-contentArea.Parent = body
-
-local TAB_DEFS = {
-    { key = "ramp", labelKey = "tab_ramp" },
-    { key = "games", labelKey = "tab_games" },
-    { key = "cam", labelKey = "tab_cam" },
-    { key = "car", labelKey = "tab_car" },
-    { key = "props", labelKey = "tab_props" },
-    { key = "esp", labelKey = "tab_esp" },
-    { key = "anim", labelKey = "tab_anim" },
-    { key = "webhook", labelKey = "tab_webhook" },
-    { key = "players", labelKey = "tab_players" },
-    { key = "slimes", labelKey = "tab_slimes" },
-    { key = "spy", labelKey = "tab_spy" },
-    { key = "settings", labelKey = "tab_settings" },
+return {
+    config = animConfig,
+    debug = debugAnimateStructure,
+    capture = getCurrentPlayingAnimId,
+    applyIdle = applyForcedIdle,
 }
-
-local tabButtons = {}
-local tabFrames = {}
-
-local function makeTabScroll(key)
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Name = key
-    scroll.Size = UDim2.new(1, 0, 1, 0)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ScrollBarThickness = 5
-    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scroll.Visible = false
-    scroll.Parent = contentArea
-
-    local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 10)
-    padding.PaddingRight = UDim.new(0, 10)
-    padding.PaddingTop = UDim.new(0, 10)
-    padding.PaddingBottom = UDim.new(0, 10)
-    padding.Parent = scroll
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 6)
-    layout.Parent = scroll
-
-    return scroll
 end
 
-for _, def in ipairs(TAB_DEFS) do
-    tabFrames[def.key] = makeTabScroll(def.key)
-end
+local AnimFeature = buildAnimFeature()
 
-local function selectTab(key)
-    lastSelectedTabKey = key
-    for k, f in pairs(tabFrames) do
-        f.Visible = (k == key)
-    end
-    for k, b in pairs(tabButtons) do
-        local selected = (k == key)
-        b.BackgroundColor3 = selected and Color3.fromRGB(40, 46, 60) or Color3.fromRGB(20, 20, 24)
-        b.TextColor3 = selected and Color3.fromRGB(120, 190, 255) or Color3.fromRGB(190, 190, 190)
-        local accent = b:FindFirstChild("Accent")
-        if accent then accent.BackgroundTransparency = selected and 0 or 1 end
-    end
-end
-
-for i, def in ipairs(TAB_DEFS) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 34)
-    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-    btn.BorderSizePixel = 0
-    btn.TextColor3 = Color3.fromRGB(190, 190, 190)
-    btn.TextSize = 12
-    btn.Font = Enum.Font.GothamBold
-    btn.TextXAlignment = Enum.TextXAlignment.Left
-    btn.Text = t(def.labelKey)
-    btn.LayoutOrder = i
-    btn.Parent = tabBar
-
-    local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 14)
-    padding.Parent = btn
-
-    local accent = Instance.new("Frame")
-    accent.Name = "Accent"
-    accent.Size = UDim2.new(0, 3, 1, 0)
-    accent.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-    accent.BackgroundTransparency = 1
-    accent.BorderSizePixel = 0
-    accent.Parent = btn
-
-    btn.MouseButton1Click:Connect(function() selectTab(def.key) end)
-    tabButtons[def.key] = btn
-end
-
--- --- helpers de widget ---
-
+-- ========================================
+-- HELPERS DE WIDGET DO MENU: ficam FORA de setupMenu de propósito -- são
+-- puramente genéricos (não dependem de nada específico de uma aba), e
+-- cada `local function` daqui dentro de setupMenu contava como 1 dos 200
+-- registros locais permitidos por função no Luau. Com o hub crescendo
+-- (Checkpoint92To1, Queda Rápida, Aceitar Gifts etc.), setupMenu sozinho
+-- estourou esse limite ("exceeded limit 200") -- tirando esses helpers
+-- pra cá, o corpo de cada widget (Instance.new, propriedades) passa a
+-- contar pro registro DESSA função, não do setupMenu.
+--
 -- Instances do Roblox (ScrollingFrame etc.) não aceitam campos Lua soltos
 -- tipo tab._n = 0 -- por isso o contador de LayoutOrder de cada aba fica
--- numa tabela à parte, indexada pela própria Instance da aba.
+-- numa tabela à parte, indexada pela própria Instance da aba. Reiniciada
+-- no começo de cada setupMenu() (troca de idioma reconstrói tudo do
+-- zero, então as Instances antigas já não são mais usadas como chave).
+-- ========================================
+
+local function buildWidgetHelpers()
+
 local tabOrderCounters = {}
 
 local function tabOrder(tab)
@@ -3956,17 +3366,254 @@ local function addToggleRow(tab, labelText, initialEnabled)
     return state
 end
 
+-- Botão de toggle genérico pra qualquer feature no formato { toggle =
+-- function() -> bool, ... } (Checkpoint92To1, ExtraGravity,
+-- AutoAcceptGifts etc.) -- evita repetir o bloco inteiro de criação de
+-- TextButton + MouseButton1Click pra cada uma, o que economiza registros
+-- locais em setupMenu (cada bloco manual usava 1 local só pro botão).
+local function addFeatureToggleButton(tab, label, feature, colorOn, colorOff, height)
+    colorOn = colorOn or Color3.fromRGB(0, 130, 60)
+    colorOff = colorOff or Color3.fromRGB(60, 60, 60)
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, height or 30)
+    btn.BackgroundColor3 = colorOff
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = label
+    btn.LayoutOrder = tabOrder(tab)
+    btn.Parent = tab
+
+    btn.MouseButton1Click:Connect(function()
+        local isEnabled = feature.toggle()
+        btn.BackgroundColor3 = isEnabled and colorOn or colorOff
+    end)
+
+    return btn
+end
+
+return {
+    resetCounters = function() tabOrderCounters = {} end,
+    tabOrder = tabOrder,
+    addSectionLabel = addSectionLabel,
+    addButton = addButton,
+    addTwoButtons = addTwoButtons,
+    addFullLabel = addFullLabel,
+    addTextField = addTextField,
+    addDivider = addDivider,
+    addInfoLabel = addInfoLabel,
+    addToggleRow = addToggleRow,
+    addFeatureToggleButton = addFeatureToggleButton,
+}
+end
+
+local Widgets = buildWidgetHelpers()
+
+-- ========================================
+-- MENU: painel único responsivo com abas
+--
+-- Tudo isso vai dentro de uma função própria (chamada logo em seguida) só
+-- por causa de um limite real do Luau: uma única função só aceita até 200
+-- variáveis locais, e o resto do script (CORE) sozinho já usa quase todas.
+-- Como essa função continua definida no mesmo lugar do arquivo, ela ainda
+-- enxerga e escreve normalmente em tudo que já existia antes (rampStatusLabel,
+-- alertKeywords, etc.) -- só isola o REGISTRO das variáveis daqui de dentro.
+-- ========================================
+
+local function setupMenu()
+
+Widgets.resetCounters()
+
+local hubCamera = Workspace.CurrentCamera
+
+-- Reconstrói do zero (troca de idioma chama setupMenu() de novo) --
+-- destrói a instância anterior antes de criar a nova.
+local oldGui = playerGui:FindFirstChild("MegaRampHub")
+if oldGui then oldGui:Destroy() end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MegaRampHub"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local TITLE_HEIGHT = 34
+local SIDEBAR_WIDTH = 128
+
+local frame = Instance.new("Frame")
+frame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+frame.BorderSizePixel = 0
+frame.Position = lastFramePosition
+frame.Draggable = true
+frame.Active = true
+frame.ClipsDescendants = true
+frame.Parent = screenGui
+
+frame:GetPropertyChangedSignal("Position"):Connect(function()
+    lastFramePosition = frame.Position
+end)
+
+local outline = Instance.new("UIStroke")
+outline.Color = Color3.fromRGB(70, 120, 200)
+outline.Thickness = 1
+outline.Transparency = 0.3
+outline.Parent = frame
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, TITLE_HEIGHT)
+titleBar.BackgroundColor3 = Color3.fromRGB(32, 34, 44)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(120, 190, 255)
+title.TextSize = 13
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = "MEGA RAMP HUB"
+title.Parent = titleBar
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 32, 0, TITLE_HEIGHT)
+minimizeBtn.Position = UDim2.new(1, -32, 0, 0)
+minimizeBtn.BackgroundTransparency = 1
+minimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+minimizeBtn.TextSize = 16
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.Text = "—"
+minimizeBtn.Parent = titleBar
+
+local body = Instance.new("Frame")
+body.Position = UDim2.new(0, 0, 0, TITLE_HEIGHT)
+body.Size = UDim2.new(1, 0, 1, -TITLE_HEIGHT)
+body.BackgroundTransparency = 1
+body.Parent = frame
+
+local tabBar = Instance.new("ScrollingFrame")
+tabBar.Size = UDim2.new(0, SIDEBAR_WIDTH, 1, 0)
+tabBar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+tabBar.BorderSizePixel = 0
+tabBar.ScrollBarThickness = 3
+tabBar.CanvasSize = UDim2.new(0, 0, 0, 0)
+tabBar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+tabBar.Parent = body
+
+local tabBarLayout = Instance.new("UIListLayout")
+tabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabBarLayout.Padding = UDim.new(0, 2)
+tabBarLayout.Parent = tabBar
+
+local contentArea = Instance.new("Frame")
+contentArea.Position = UDim2.new(0, SIDEBAR_WIDTH, 0, 0)
+contentArea.Size = UDim2.new(1, -SIDEBAR_WIDTH, 1, 0)
+contentArea.BackgroundTransparency = 1
+contentArea.Parent = body
+
+local TAB_DEFS = {
+    { key = "ramp", labelKey = "tab_ramp" },
+    { key = "games", labelKey = "tab_games" },
+    { key = "cam", labelKey = "tab_cam" },
+    { key = "car", labelKey = "tab_car" },
+    { key = "anim", labelKey = "tab_anim" },
+    { key = "webhook", labelKey = "tab_webhook" },
+    { key = "players", labelKey = "tab_players" },
+    { key = "slimes", labelKey = "tab_slimes" },
+    { key = "settings", labelKey = "tab_settings" },
+}
+
+local tabButtons = {}
+local tabFrames = {}
+
+local function makeTabScroll(key)
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = key
+    scroll.Size = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 5
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Visible = false
+    scroll.Parent = contentArea
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingRight = UDim.new(0, 10)
+    padding.PaddingTop = UDim.new(0, 10)
+    padding.PaddingBottom = UDim.new(0, 10)
+    padding.Parent = scroll
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 6)
+    layout.Parent = scroll
+
+    return scroll
+end
+
+for _, def in ipairs(TAB_DEFS) do
+    tabFrames[def.key] = makeTabScroll(def.key)
+end
+
+local function selectTab(key)
+    lastSelectedTabKey = key
+    for k, f in pairs(tabFrames) do
+        f.Visible = (k == key)
+    end
+    for k, b in pairs(tabButtons) do
+        local selected = (k == key)
+        b.BackgroundColor3 = selected and Color3.fromRGB(40, 46, 60) or Color3.fromRGB(20, 20, 24)
+        b.TextColor3 = selected and Color3.fromRGB(120, 190, 255) or Color3.fromRGB(190, 190, 190)
+        local accent = b:FindFirstChild("Accent")
+        if accent then accent.BackgroundTransparency = selected and 0 or 1 end
+    end
+end
+
+for i, def in ipairs(TAB_DEFS) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    btn.BorderSizePixel = 0
+    btn.TextColor3 = Color3.fromRGB(190, 190, 190)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.Text = t(def.labelKey)
+    btn.LayoutOrder = i
+    btn.Parent = tabBar
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 14)
+    padding.Parent = btn
+
+    local accent = Instance.new("Frame")
+    accent.Name = "Accent"
+    accent.Size = UDim2.new(0, 3, 1, 0)
+    accent.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+    accent.BackgroundTransparency = 1
+    accent.BorderSizePixel = 0
+    accent.Parent = btn
+
+    btn.MouseButton1Click:Connect(function() selectTab(def.key) end)
+    tabButtons[def.key] = btn
+end
+
 -- --- ABA RAMP ---
 
 local rampTab = tabFrames.ramp
-addSectionLabel(rampTab, t("sec_ramp_cycle"), Color3.fromRGB(255, 140, 60))
-local rampStartBtn, rampStopBtn = addTwoButtons(rampTab, t("start"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
-local toggleAlertBtn = addButton(rampTab, t("btn_alert_rainbow"), Color3.fromRGB(150, 100, 0), 30)
-local sellAllBtn = addButton(rampTab, t("btn_sell_all"), Color3.fromRGB(0, 150, 100), 34)
+Widgets.addSectionLabel(rampTab, t("sec_ramp_cycle"), Color3.fromRGB(255, 140, 60))
+local rampStartBtn, rampStopBtn = Widgets.addTwoButtons(rampTab, t("start"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+local toggleAlertBtn = Widgets.addButton(rampTab, t("btn_alert_rainbow"), Color3.fromRGB(150, 100, 0), 30)
+local sellAllBtn = Widgets.addButton(rampTab, t("btn_sell_all"), Color3.fromRGB(0, 150, 100), 34)
 
-rampStatusLabel = addFullLabel(rampTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
-rampCountLabel = addFullLabel(rampTab, t("label_teleports_forced") .. "0", Color3.fromRGB(200, 200, 255))
-rampCycleLabel = addFullLabel(rampTab, t("label_cycles_complete") .. "0", Color3.fromRGB(255, 200, 100))
+rampStatusLabel = Widgets.addFullLabel(rampTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+rampCountLabel = Widgets.addFullLabel(rampTab, t("label_teleports_forced") .. "0", Color3.fromRGB(200, 200, 255))
+rampCycleLabel = Widgets.addFullLabel(rampTab, t("label_cycles_complete") .. "0", Color3.fromRGB(255, 200, 100))
 
 local autoPauseToggleBtn = Instance.new("TextButton")
 autoPauseToggleBtn.Size = UDim2.new(1, 0, 0, 26)
@@ -3975,42 +3622,47 @@ autoPauseToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 autoPauseToggleBtn.TextSize = 11
 autoPauseToggleBtn.Font = Enum.Font.GothamBold
 autoPauseToggleBtn.Text = t("btn_auto_pause")
-autoPauseToggleBtn.LayoutOrder = tabOrder(rampTab)
+autoPauseToggleBtn.LayoutOrder = Widgets.tabOrder(rampTab)
 autoPauseToggleBtn.Parent = rampTab
 autoPauseToggleBtn.MouseButton1Click:Connect(function()
     autoPauseConfig.enabled = not autoPauseConfig.enabled
     autoPauseToggleBtn.BackgroundColor3 = autoPauseConfig.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
 end)
 
-addInfoLabel(rampTab, "Ativa o evento mais caro, teleporta no JumpCar até acabar, vende tudo e repete sozinho até PARAR. Com a pausa automática LIGADA, os 3 loops (Ramp/Memória/Bata o Slime) pausam sozinhos se outro jogador entrar na sala e retomam quando ficar sozinho de novo. Desligada, eles ignoram outros jogadores e continuam rodando direto.")
+Widgets.addInfoLabel(rampTab, "Ativa o evento mais caro, teleporta no JumpCar até acabar, vende tudo e repete sozinho até PARAR. Com a pausa automática LIGADA, os 3 loops (Ramp/Memória/Bata o Slime) pausam sozinhos se outro jogador entrar na sala e retomam quando ficar sozinho de novo. Desligada, eles ignoram outros jogadores e continuam rodando direto.")
 
 rampStartBtn.MouseButton1Click:Connect(rampGuardedStart)
 rampStopBtn.MouseButton1Click:Connect(rampGuardedStop)
 toggleAlertBtn.MouseButton1Click:Connect(function()
-    if alertKeywords[1] == "limitedrainbow" then
-        alertKeywords = { "limited" }
+    if AlertFeature.keywords[1] == "limitedrainbow" then
+        AlertFeature.keywords[1] = "limited"
         toggleAlertBtn.Text = t("btn_alert_all_limited")
     else
-        alertKeywords = { "limitedrainbow" }
+        AlertFeature.keywords[1] = "limitedrainbow"
         toggleAlertBtn.Text = t("btn_alert_rainbow")
     end
 end)
-sellAllBtn.MouseButton1Click:Connect(function() autoSellAllSlimes() end)
+sellAllBtn.MouseButton1Click:Connect(function() SellAll.sellAllAsync() end)
 
-addInfoLabel(rampTab, "O Mega Jump Insta (CarSpawn/JumpCar/Checkpoint92/LandingZone3 colapsados na posição do CarSpawn, com a FORÇA DO IMPULSO do JumpCar zerada e 3 cópias extras do Checkpoint92 em quadrado -- acima/abaixo/frente -- pra garantir o toque) agora liga e desliga JUNTO com esse ciclo: ativa sozinho ao clicar Iniciar e desativa sozinho ao Parar (ou quando pausa automaticamente por outro jogador entrar). 100% client-side -- só a SUA tela muda.")
+Widgets.addInfoLabel(rampTab, "O Mega Jump Insta (CarSpawn/JumpCar/Checkpoint92/LandingZone3 colapsados na posição do CarSpawn, com a FORÇA DO IMPULSO do JumpCar zerada e 3 cópias extras do Checkpoint92 em quadrado -- acima/abaixo/frente -- pra garantir o toque) agora liga e desliga JUNTO com esse ciclo: ativa sozinho ao clicar Iniciar e desativa sozinho ao Parar (ou quando pausa automaticamente por outro jogador entrar). 100% client-side -- só a SUA tela muda.")
 
 -- --- ABA GAMES ---
 
 local gamesTab = tabFrames.games
-addSectionLabel(gamesTab, t("sec_memory"), Color3.fromRGB(0, 190, 100))
-local memoryStartBtnUi, memoryStopBtnUi = addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
-memoryStatusLabel = addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
-memoryCountLabel = addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
+Widgets.addSectionLabel(gamesTab, t("sec_memory"), Color3.fromRGB(0, 190, 100))
+local memoryStartBtnUi, memoryStopBtnUi = Widgets.addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+memoryStatusLabel = Widgets.addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+memoryCountLabel = Widgets.addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
 
-addDivider(gamesTab)
+Widgets.addDivider(gamesTab)
 
-addSectionLabel(gamesTab, t("sec_hitslime"), Color3.fromRGB(0, 185, 235))
-local secondsInput = addTextField(gamesTab, t("lbl_seconds_per_round"), hitSlimeConfig.secondsPerRound)
+Widgets.addFeatureToggleButton(gamesTab, "Grudar Painel de Minigames no Evento", MiniGameStick)
+MiniGameStick.setStatusLabel(Widgets.addFullLabel(gamesTab, "Status: DESLIGADO (posição original)", Color3.fromRGB(100, 200, 100)))
+Widgets.addInfoLabel(gamesTab, "Move o painel do MiniGame1 (usado pela Memória) pra cima do shop de eventos, só na sua tela -- desliga sozinho quando o Bata o Slime inicia (o loop dele ativa o evento sem parar e o painel grudado atrapalha).")
+
+Widgets.addDivider(gamesTab)
+Widgets.addSectionLabel(gamesTab, t("sec_hitslime"), Color3.fromRGB(0, 185, 235))
+local secondsInput = Widgets.addTextField(gamesTab, t("lbl_seconds_per_round"), hitSlimeConfig.secondsPerRound)
 secondsInput.FocusLost:Connect(function()
     local val = tonumber(secondsInput.Text)
     if val and val >= 0 then
@@ -4019,43 +3671,43 @@ secondsInput.FocusLost:Connect(function()
         secondsInput.Text = tostring(hitSlimeConfig.secondsPerRound)
     end
 end)
-local hitSlimeStartBtnUi, hitSlimeStopBtnUi = addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
-hitSlimeStatusLabel = addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
-hitSlimeCountLabel = addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
+local hitSlimeStartBtnUi, hitSlimeStopBtnUi = Widgets.addTwoButtons(gamesTab, t("play"), Color3.fromRGB(0, 150, 0), t("stop"), Color3.fromRGB(150, 0, 0))
+hitSlimeStatusLabel = Widgets.addFullLabel(gamesTab, t("status_stopped"), Color3.fromRGB(100, 200, 100))
+hitSlimeCountLabel = Widgets.addFullLabel(gamesTab, t("label_rounds") .. "0", Color3.fromRGB(200, 200, 255))
 
-addInfoLabel(gamesTab, "Memória joga de verdade. Bata o Slime é atalho por remote (~180s totais pra não cair no \"Too fast\"). Só existe UMA rodada ativa por vez no servidor. Os dois repetem sozinhos até PARAR e pausam se outro jogador entrar.")
+Widgets.addInfoLabel(gamesTab, "Memória joga de verdade. Bata o Slime é atalho por remote (~180s totais pra não cair no \"Too fast\"). Só existe UMA rodada ativa por vez no servidor. Os dois repetem sozinhos até PARAR e pausam se outro jogador entrar.")
 
 memoryStartBtnUi.MouseButton1Click:Connect(memoryGuardedStart)
 memoryStopBtnUi.MouseButton1Click:Connect(memoryGuardedStop)
-hitSlimeStartBtnUi.MouseButton1Click:Connect(hitSlimeGuardedStart)
-hitSlimeStopBtnUi.MouseButton1Click:Connect(hitSlimeGuardedStop)
+hitSlimeStartBtnUi.MouseButton1Click:Connect(startHitSlimeLoop)
+hitSlimeStopBtnUi.MouseButton1Click:Connect(stopHitSlimeLoop)
 
 -- --- ABA CAM ---
 
 local camTab = tabFrames.cam
-addSectionLabel(camTab, t("sec_freecam"), Color3.fromRGB(0, 150, 255))
-local speedInput = addTextField(camTab, t("lbl_freecam_speed"), freecamConfig.baseSpeed)
+Widgets.addSectionLabel(camTab, t("sec_freecam"), Color3.fromRGB(0, 150, 255))
+local speedInput = Widgets.addTextField(camTab, t("lbl_freecam_speed"), Freecam.config.baseSpeed)
 speedInput.FocusLost:Connect(function()
     local val = tonumber(speedInput.Text)
     if val and val > 0 then
-        freecamConfig.baseSpeed = val
+        Freecam.config.baseSpeed = val
     else
-        speedInput.Text = tostring(freecamConfig.baseSpeed)
+        speedInput.Text = tostring(Freecam.config.baseSpeed)
     end
 end)
-local camEnableBtn, camDisableBtn = addTwoButtons(camTab, t("enable"), Color3.fromRGB(0, 150, 0), t("disable"), Color3.fromRGB(150, 0, 0))
-freecamStatusLabel = addFullLabel(camTab, t("status_inactive"), Color3.fromRGB(100, 200, 100))
-addInfoLabel(camTab, "Botão direito + mover = olhar. WASD move, Space/Ctrl sobe e desce, Shift acelera. F5 liga/desliga a qualquer momento, em qualquer aba. Personagem fica ancorado (parado) enquanto ativo.")
+local camEnableBtn, camDisableBtn = Widgets.addTwoButtons(camTab, t("enable"), Color3.fromRGB(0, 150, 0), t("disable"), Color3.fromRGB(150, 0, 0))
+Freecam.setFreecamStatusLabel(Widgets.addFullLabel(camTab, t("status_inactive"), Color3.fromRGB(100, 200, 100)))
+Widgets.addInfoLabel(camTab, "Botão direito + mover = olhar. WASD move, Space/Ctrl sobe e desce, Shift acelera. F5 liga/desliga a qualquer momento, em qualquer aba. Personagem fica ancorado (parado) enquanto ativo.")
 
-camEnableBtn.MouseButton1Click:Connect(enableFreecam)
-camDisableBtn.MouseButton1Click:Connect(disableFreecam)
+camEnableBtn.MouseButton1Click:Connect(Freecam.enable)
+camDisableBtn.MouseButton1Click:Connect(Freecam.disable)
 
 -- --- ABA CARRO ---
 
 local carTab = tabFrames.car
-addSectionLabel(carTab, t("sec_car_boost"), Color3.fromRGB(0, 220, 220))
+Widgets.addSectionLabel(carTab, t("sec_car_boost"), Color3.fromRGB(0, 220, 220))
 
-local carForceInput = addTextField(carTab, t("lbl_boost_force"), carBoostConfig.force)
+local carForceInput = Widgets.addTextField(carTab, t("lbl_boost_force"), carBoostConfig.force)
 carForceInput.FocusLost:Connect(function()
     local val = tonumber(carForceInput.Text)
     if val and val > 0 then
@@ -4072,19 +3724,19 @@ carToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 carToggleBtn.TextSize = 12
 carToggleBtn.Font = Enum.Font.GothamBold
 carToggleBtn.Text = t("btn_enable_boost")
-carToggleBtn.LayoutOrder = tabOrder(carTab)
+carToggleBtn.LayoutOrder = Widgets.tabOrder(carTab)
 carToggleBtn.Parent = carTab
 carToggleBtn.MouseButton1Click:Connect(function()
     carBoostConfig.enabled = not carBoostConfig.enabled
     carToggleBtn.BackgroundColor3 = carBoostConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
 end)
 
-carStatusLabel = addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100))
+carStatusLabel = Widgets.addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100))
 
-addInfoLabel(carTab, "Com o impulso ATIVADO, segurar SHIFT empurra o carro pra frente com força extra a cada instante -- solta e para na hora, sem esperar desacelerar. Só funciona enquanto você está dentro do carro na pista. Ajuste a força se sentir fraco ou forte demais.")
+Widgets.addInfoLabel(carTab, "Com o impulso ATIVADO, segurar SHIFT empurra o carro pra frente com força extra a cada instante -- solta e para na hora, sem esperar desacelerar. Só funciona enquanto você está dentro do carro na pista. Ajuste a força se sentir fraco ou forte demais.")
 
-addDivider(carTab)
-addSectionLabel(carTab, t("sec_fly"), Color3.fromRGB(0, 220, 220))
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, t("sec_fly"), Color3.fromRGB(0, 220, 220))
 
 local flyToggleBtn = Instance.new("TextButton")
 flyToggleBtn.Size = UDim2.new(1, 0, 0, 30)
@@ -4093,22 +3745,22 @@ flyToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 flyToggleBtn.TextSize = 12
 flyToggleBtn.Font = Enum.Font.GothamBold
 flyToggleBtn.Text = t("btn_fly_toggle")
-flyToggleBtn.LayoutOrder = tabOrder(carTab)
+flyToggleBtn.LayoutOrder = Widgets.tabOrder(carTab)
 flyToggleBtn.Parent = carTab
 flyToggleBtn.MouseButton1Click:Connect(function()
     CarFly.toggle()
     flyToggleBtn.BackgroundColor3 = CarFly.config.active and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
 end)
 
-CarFly.setStatusLabel(addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100)))
+CarFly.setStatusLabel(Widgets.addFullLabel(carTab, t("status_off"), Color3.fromRGB(100, 200, 100)))
 
-addInfoLabel(carTab, "Desliga a colisão do carro inteiro e deixa você voar com ele (com você sentado dentro) usando WASD/Space/Ctrl relativo à câmera, igual o Free Cam -- Shift acelera. Precisa estar dentro do carro. Desativar devolve a colisão normal.")
+Widgets.addInfoLabel(carTab, "Desliga a colisão do carro inteiro e deixa você voar com ele (com você sentado dentro) usando WASD/Space/Ctrl relativo à câmera, igual o Free Cam -- Shift acelera. Precisa estar dentro do carro. Desativar devolve a colisão normal.")
 
-addDivider(carTab)
-addSectionLabel(carTab, t("sec_checkpoint_dup"), Color3.fromRGB(255, 140, 60))
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, t("sec_checkpoint_dup"), Color3.fromRGB(255, 140, 60))
 
-local offsetZInput = addTextField(carTab, t("lbl_offset_z"), "10")
-local dupCheckpointsBtn, clearDupCheckpointsBtn = addTwoButtons(carTab, t("btn_dup_checkpoints"), Color3.fromRGB(0, 150, 100), t("btn_clear_dup_checkpoints"), Color3.fromRGB(150, 0, 0))
+local offsetZInput = Widgets.addTextField(carTab, t("lbl_offset_z"), "10")
+local dupCheckpointsBtn, clearDupCheckpointsBtn = Widgets.addTwoButtons(carTab, t("btn_dup_checkpoints"), Color3.fromRGB(0, 150, 100), t("btn_clear_dup_checkpoints"), Color3.fromRGB(150, 0, 0))
 dupCheckpointsBtn.MouseButton1Click:Connect(function()
     local offset = tonumber(offsetZInput.Text) or 10
     CheckpointDup.duplicateAll(offset)
@@ -4117,14 +3769,14 @@ clearDupCheckpointsBtn.MouseButton1Click:Connect(function()
     CheckpointDup.clearAll()
 end)
 
-addInfoLabel(carTab, "Clona cada checkpoint da pasta Checkpoints com um deslocamento em Z e conecta um Touched próprio pra disparar o mesmo remote do jogo -- assim, passando pela pista duas vezes (original + cópia, com mais de 1s de intervalo) dispara o checkpoint de novo. Remover Duplicados apaga só as cópias criadas por aqui, sem mexer nos checkpoints originais do jogo.")
+Widgets.addInfoLabel(carTab, "Clona cada checkpoint da pasta Checkpoints com um deslocamento em Z e conecta um Touched próprio pra disparar o mesmo remote do jogo -- assim, passando pela pista duas vezes (original + cópia, com mais de 1s de intervalo) dispara o checkpoint de novo. Remover Duplicados apaga só as cópias criadas por aqui, sem mexer nos checkpoints originais do jogo.")
 
-addDivider(carTab)
-addSectionLabel(carTab, t("sec_checkpoint_extra"), Color3.fromRGB(255, 100, 220))
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, t("sec_checkpoint_extra"), Color3.fromRGB(255, 100, 220))
 
-local extraCountInput = addTextField(carTab, t("lbl_extra_count"), "5")
-local extraSpacingInput = addTextField(carTab, t("lbl_extra_spacing"), "15")
-local createExtraBtn, autoTriggerExtraBtn = addTwoButtons(carTab, t("btn_create_extra"), Color3.fromRGB(150, 0, 150), t("btn_auto_trigger_extra"), Color3.fromRGB(0, 130, 150))
+local extraCountInput = Widgets.addTextField(carTab, t("lbl_extra_count"), "5")
+local extraSpacingInput = Widgets.addTextField(carTab, t("lbl_extra_spacing"), "15")
+local createExtraBtn, autoTriggerExtraBtn = Widgets.addTwoButtons(carTab, t("btn_create_extra"), Color3.fromRGB(150, 0, 150), t("btn_auto_trigger_extra"), Color3.fromRGB(0, 130, 150))
 
 local lastCreatedCheckpoints = {}
 createExtraBtn.MouseButton1Click:Connect(function()
@@ -4140,168 +3792,88 @@ autoTriggerExtraBtn.MouseButton1Click:Connect(function()
     CheckpointDup.autoTriggerCreated(lastCreatedCheckpoints, 1.2)
 end)
 
-addInfoLabel(carTab, "Clona o checkpoint de maior número existente e cria N novos checkpoints em sequência (máximo+1, máximo+2, ...), já ligados no mesmo remote do jogo. Como o servidor só parece premiar quando o número sobe, isso testa se dá pra continuar ganhando além do checkpoint final da pista. Disparar Automaticamente teleporta seu personagem até cada um, esperando mais de 1s entre eles.")
+Widgets.addInfoLabel(carTab, "Clona o checkpoint de maior número existente e cria N novos checkpoints em sequência (máximo+1, máximo+2, ...), já ligados no mesmo remote do jogo. Como o servidor só parece premiar quando o número sobe, isso testa se dá pra continuar ganhando além do checkpoint final da pista. Disparar Automaticamente teleporta seu personagem até cada um, esperando mais de 1s entre eles.")
 
--- --- ABA PROPS (LOCAL, SÓ PRA VOCÊ) ---
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, "CHECKPOINT 92 -> CHECKPOINT 1", Color3.fromRGB(255, 100, 220))
 
-local propsTab = tabFrames.props
-addSectionLabel(propsTab, t("sec_clone_map"), Color3.fromRGB(255, 180, 80))
+Widgets.addFeatureToggleButton(carTab, "Mover Checkpoint 92 pro Checkpoint 1", Checkpoint92To1)
 
-local crosshairToggleBtn = Instance.new("TextButton")
-crosshairToggleBtn.Size = UDim2.new(1, 0, 0, 26)
-crosshairToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
-crosshairToggleBtn.TextColor3 = Color3.new(1, 1, 1)
-crosshairToggleBtn.TextSize = 11
-crosshairToggleBtn.Font = Enum.Font.GothamBold
-crosshairToggleBtn.Text = t("btn_show_crosshair")
-crosshairToggleBtn.LayoutOrder = tabOrder(propsTab)
-crosshairToggleBtn.Parent = propsTab
-crosshairToggleBtn.MouseButton1Click:Connect(function()
-    Props.crosshairLabel.Visible = not Props.crosshairLabel.Visible
-    crosshairToggleBtn.BackgroundColor3 = Props.crosshairLabel.Visible and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
+Widgets.addInfoLabel(carTab, "Move a part do Checkpoint 92 (o multiplicador final) pra cima do Checkpoint 1 E a LandingZone1 pra cima da LandingZone3, mantendo a rotação original de cada uma -- independente do Mega Jump Insta, sem mexer em JumpCar/CarSpawn. 100% client-side. Desativar volta as duas pro lugar original.")
+
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, "MINI PARKOUR - LOOP AUTOMÁTICO", Color3.fromRGB(255, 140, 60))
+
+local miniParkourStartInput = Widgets.addTextField(carTab, "Checkpoint inicial:", MiniParkourShortcut.config.startCheckpoint)
+miniParkourStartInput.FocusLost:Connect(function()
+    local val = tonumber(miniParkourStartInput.Text)
+    if val and val >= 0 then
+        MiniParkourShortcut.config.startCheckpoint = val
+    else
+        miniParkourStartInput.Text = tostring(MiniParkourShortcut.config.startCheckpoint)
+    end
 end)
 
-local cloneBtn = addButton(propsTab, t("btn_clone_looked"), Color3.fromRGB(150, 100, 0), 34)
-cloneBtn.MouseButton1Click:Connect(function() Props.clone() end)
+local miniParkourEndInput = Widgets.addTextField(carTab, "Checkpoint final:", MiniParkourShortcut.config.endCheckpoint)
+miniParkourEndInput.FocusLost:Connect(function()
+    local val = tonumber(miniParkourEndInput.Text)
+    if val and val >= 0 then
+        MiniParkourShortcut.config.endCheckpoint = val
+    else
+        miniParkourEndInput.Text = tostring(MiniParkourShortcut.config.endCheckpoint)
+    end
+end)
 
-local propsDistanceInput = addTextField(propsTab, t("lbl_aim_distance"), Props.config.spawnDistance)
-propsDistanceInput.FocusLost:Connect(function()
-    local val = tonumber(propsDistanceInput.Text)
+local miniParkourDelayInput = Widgets.addTextField(carTab, "Delay entre cada checkpoint (s):", MiniParkourShortcut.config.delaySeconds)
+miniParkourDelayInput.FocusLost:Connect(function()
+    local val = tonumber(miniParkourDelayInput.Text)
     if val and val > 0 then
-        Props.config.spawnDistance = val
+        MiniParkourShortcut.config.delaySeconds = val
     else
-        propsDistanceInput.Text = tostring(Props.config.spawnDistance)
+        miniParkourDelayInput.Text = tostring(MiniParkourShortcut.config.delaySeconds)
     end
 end)
 
-addDivider(propsTab)
-addSectionLabel(propsTab, t("sec_selected_object"), Color3.fromRGB(0, 200, 255))
-Props.setStatusLabel(addFullLabel(propsTab, t("label_none_selected"), Color3.fromRGB(150, 150, 150)))
+local miniParkourStartBtn, miniParkourStopBtn = Widgets.addTwoButtons(carTab, "Iniciar", Color3.fromRGB(0, 150, 0), "Parar", Color3.fromRGB(150, 0, 0))
+miniParkourStartBtn.MouseButton1Click:Connect(function() MiniParkourShortcut.start() end)
+miniParkourStopBtn.MouseButton1Click:Connect(function() MiniParkourShortcut.stop() end)
 
-local selectModeBtn = addButton(propsTab, t("btn_select_mode"), Color3.fromRGB(60, 60, 60), 30)
-selectModeBtn.MouseButton1Click:Connect(function()
-    local enabled = Props.toggleSelectMode()
-    selectModeBtn.BackgroundColor3 = enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
-end)
+MiniParkourShortcut.setStatusLabel(Widgets.addFullLabel(carTab, "Status: PARADO", Color3.fromRGB(100, 200, 100)))
 
-local carryBtn = addButton(propsTab, t("btn_carry"), Color3.fromRGB(90, 90, 200), 30)
-carryBtn.MouseButton1Click:Connect(function() Props.toggleCarry() end)
+Widgets.addInfoLabel(carTab, "Igual o ciclo da aba Ramp: teleporta ate o MiniParkourEnter, dispara o prompt pra abrir a sessao, dispara os checkpoints em sequencia por remote (sem precisar andar ate cada um), espera o FinishMessage e repete sozinho ate PARAR. O FinishMessage do jogo vem com a recompensa embutida no texto (ex: +500 CASH).")
 
-local attachBtn = addButton(propsTab, t("btn_attach"), Color3.fromRGB(0, 150, 100), 30)
-attachBtn.MouseButton1Click:Connect(function() Props.attach() end)
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, "QUEDA RÁPIDA (GRAVIDADE EXTRA NO AR)", Color3.fromRGB(0, 220, 220))
 
-local detachBtn, anchorBtn = addTwoButtons(propsTab, t("btn_detach"), Color3.fromRGB(150, 100, 0), t("btn_toggle_anchor"), Color3.fromRGB(60, 60, 60))
-detachBtn.MouseButton1Click:Connect(function() Props.detach() end)
-anchorBtn.MouseButton1Click:Connect(function() Props.toggleAnchor() end)
-
-local scaleDownBtn, scaleUpBtn = addTwoButtons(propsTab, t("btn_shrink"), Color3.fromRGB(60, 60, 60), t("btn_grow"), Color3.fromRGB(60, 60, 60))
-scaleDownBtn.MouseButton1Click:Connect(function() Props.scale(0.8) end)
-scaleUpBtn.MouseButton1Click:Connect(function() Props.scale(1.25) end)
-
-local deleteBtn, clearAllBtn = addTwoButtons(propsTab, t("btn_delete"), Color3.fromRGB(150, 0, 0), t("btn_clear_all"), Color3.fromRGB(150, 0, 0))
-deleteBtn.MouseButton1Click:Connect(function() Props.delete() end)
-clearAllBtn.MouseButton1Click:Connect(function() Props.clearAll() end)
-
-addInfoLabel(propsTab, "100% local -- SÓ VOCÊ VÊ as cópias, ninguém mais no servidor enxerga (LocalScript não tem canal de rede pra replicar isso). CLONAR duplica exatamente o objeto (ou o Model inteiro, se fizer parte de um) que estiver embaixo da flecha no centro da tela, dentro da distância configurada. MODO SELEÇÃO liga o clique-pra-selecionar num objeto já clonado; depois SEGURAR carrega ele na frente da câmera até clicar de novo pra soltar; GRUDAR cola ele fisicamente (WeldConstraint) no que estiver na mira -- útil pra grudar em algo que se move, tipo um carro.")
-
-addDivider(propsTab)
-addSectionLabel(propsTab, t("sec_time_of_day"), Color3.fromRGB(150, 170, 255))
-
-local timeToggleBtn = Instance.new("TextButton")
-timeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
-timeToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-timeToggleBtn.TextColor3 = Color3.new(1, 1, 1)
-timeToggleBtn.TextSize = 11
-timeToggleBtn.Font = Enum.Font.GothamBold
-timeToggleBtn.Text = t("btn_keep_fixed")
-timeToggleBtn.LayoutOrder = tabOrder(propsTab)
-timeToggleBtn.Parent = propsTab
-timeToggleBtn.MouseButton1Click:Connect(function()
-    timeOfDayConfig.enabled = not timeOfDayConfig.enabled
-    timeToggleBtn.BackgroundColor3 = timeOfDayConfig.enabled and Color3.fromRGB(0, 110, 60) or Color3.fromRGB(60, 60, 60)
-    if timeOfDayConfig.enabled then applyTimeOfDay() end
-end)
-
-local dawnBtn, dayBtn = addTwoButtons(propsTab, t("btn_dawn"), Color3.fromRGB(255, 170, 100), t("btn_day"), Color3.fromRGB(255, 210, 80))
-local duskBtn, nightBtn = addTwoButtons(propsTab, t("btn_dusk"), Color3.fromRGB(230, 120, 60), t("btn_night"), Color3.fromRGB(40, 50, 90))
-
-local timeInput = addTextField(propsTab, t("lbl_exact_hour"), timeOfDayConfig.clockTime)
-timeInput.FocusLost:Connect(function()
-    local val = tonumber(timeInput.Text)
-    if val and val >= 0 and val <= 24 then
-        timeOfDayConfig.clockTime = val
-        timeOfDayConfig.enabled = true
-        timeToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
-        applyTimeOfDay()
+local extraGravityInput = Widgets.addTextField(carTab, "Gravidade extra (studs/s², ex: 50):", ExtraGravity.config.extraGravity)
+extraGravityInput.FocusLost:Connect(function()
+    local val = tonumber(extraGravityInput.Text)
+    if val and val >= 0 then
+        ExtraGravity.config.extraGravity = val
     else
-        timeInput.Text = tostring(timeOfDayConfig.clockTime)
+        extraGravityInput.Text = tostring(ExtraGravity.config.extraGravity)
     end
 end)
 
-local function setTimePreset(hour)
-    timeOfDayConfig.clockTime = hour
-    timeOfDayConfig.enabled = true
-    timeToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 60)
-    timeInput.Text = tostring(hour)
-    applyTimeOfDay()
-end
+Widgets.addFeatureToggleButton(carTab, "Ativar Queda Rápida", ExtraGravity)
 
-dawnBtn.MouseButton1Click:Connect(function() setTimePreset(6) end)
-dayBtn.MouseButton1Click:Connect(function() setTimePreset(12) end)
-duskBtn.MouseButton1Click:Connect(function() setTimePreset(18) end)
-nightBtn.MouseButton1Click:Connect(function() setTimePreset(0) end)
+ExtraGravity.setStatusLabel(Widgets.addFullLabel(carTab, "Status: DESLIGADO", Color3.fromRGB(100, 200, 100)))
 
-addDivider(propsTab)
-addSectionLabel(propsTab, t("sec_weather"), Color3.fromRGB(120, 200, 255))
-
-local weatherStatusLabel = addFullLabel(propsTab, "Status: CLEAR", Color3.fromRGB(100, 200, 100))
-
-local weatherClearBtn, weatherRainBtn = addTwoButtons(propsTab, t("btn_weather_clear"), Color3.fromRGB(60, 60, 60), t("btn_weather_rain"), Color3.fromRGB(0, 110, 180))
-local weatherStormBtn, weatherFogBtn = addTwoButtons(propsTab, t("btn_weather_storm"), Color3.fromRGB(70, 70, 90), t("btn_weather_fog"), Color3.fromRGB(140, 140, 145))
-local weatherSnowBtn, weatherSandBtn = addTwoButtons(propsTab, t("btn_weather_snow"), Color3.fromRGB(150, 180, 220), t("btn_weather_sandstorm"), Color3.fromRGB(180, 140, 80))
-
-weatherClearBtn.MouseButton1Click:Connect(function() Weather.applyPreset("clear", weatherStatusLabel) end)
-weatherRainBtn.MouseButton1Click:Connect(function() Weather.applyPreset("rain", weatherStatusLabel) end)
-weatherStormBtn.MouseButton1Click:Connect(function() Weather.applyPreset("storm", weatherStatusLabel) end)
-weatherFogBtn.MouseButton1Click:Connect(function() Weather.applyPreset("fog", weatherStatusLabel) end)
-weatherSnowBtn.MouseButton1Click:Connect(function() Weather.applyPreset("snow", weatherStatusLabel) end)
-weatherSandBtn.MouseButton1Click:Connect(function() Weather.applyPreset("sandstorm", weatherStatusLabel) end)
-
-addInfoLabel(propsTab, "O jogo não tem clima nenhum de verdade (sem chuva/neve/neblina no código) -- isso aqui é construído do zero, 100% visual e só na SUA tela: Atmosphere pra névoa/densidade, partículas presas numa part que segue sua câmera pra chuva/neve/areia, e na Tempestade ainda entra um flash + som de trovão de vez em quando. Limpo volta tudo ao normal.")
-
--- --- ABA ESP ---
-
-local espTab = tabFrames.esp
-addSectionLabel(espTab, t("sec_esp"), Color3.fromRGB(255, 60, 60))
-local espEnableBtn, espDisableBtn = addTwoButtons(espTab, t("enable"), Color3.fromRGB(0, 150, 0), t("disable"), Color3.fromRGB(150, 0, 0))
-espStatusLabel = addFullLabel(espTab, t("status_inactive"), Color3.fromRGB(100, 200, 100))
-local espDistanceInput = addTextField(espTab, t("lbl_esp_distance"), espConfig.maxDistance)
-espDistanceInput.FocusLost:Connect(function()
-    local val = tonumber(espDistanceInput.Text)
-    if val and val > 0 then
-        espConfig.maxDistance = val
-    else
-        espDistanceInput.Text = tostring(espConfig.maxDistance)
-    end
-end)
-addInfoLabel(espTab, "Mostra um contorno colorido + nome/distância de cada jogador através de parede. 100% visual, só na SUA tela -- não afeta o jogo de ninguém, nem aparece pros outros.")
-
-espEnableBtn.MouseButton1Click:Connect(enableEsp)
-espDisableBtn.MouseButton1Click:Connect(disableEsp)
+Widgets.addInfoLabel(carTab, "O pulo do JumpCar em si vem PRONTO do servidor (não dá pra reduzir a distância), mas a queda DEPOIS do pulo roda com física local, então isso soma uma velocidade extra pra baixo em cima do carro todo Heartbeat -- ele desce mais rápido depois de pular, sem afetar a dirigibilidade normal (a colisão com o chão já cancela essa velocidade sozinha). Editar o valor só tem efeito na PRÓXIMA vez que ativar.")
 
 -- --- ABA ANIM ---
 
 local animTab = tabFrames.anim
-addSectionLabel(animTab, t("sec_anim_idle"), Color3.fromRGB(255, 200, 0))
+Widgets.addSectionLabel(animTab, t("sec_anim_idle"), Color3.fromRGB(255, 200, 0))
 
-local idleBox = addTextField(animTab, t("lbl_idle_id"), animConfig.idleId)
-idleBox.FocusLost:Connect(function() animConfig.idleId = idleBox.Text end)
+local idleBox = Widgets.addTextField(animTab, t("lbl_idle_id"), AnimFeature.config.idleId)
+idleBox.FocusLost:Connect(function() AnimFeature.config.idleId = idleBox.Text end)
 
-local captureBtn = addButton(animTab, t("btn_capture_anim"), Color3.fromRGB(90, 90, 200), 32)
+local captureBtn = Widgets.addButton(animTab, t("btn_capture_anim"), Color3.fromRGB(90, 90, 200), 32)
 captureBtn.MouseButton1Click:Connect(function()
-    local id = getCurrentPlayingAnimId()
+    local id = AnimFeature.capture()
     if id then
-        animConfig.idleId = id
+        AnimFeature.config.idleId = id
         idleBox.Text = id
         addLog("[ANIM] Capturado: " .. id)
     else
@@ -4309,8 +3881,8 @@ captureBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local diagBtn = addButton(animTab, t("btn_diagnose"), Color3.fromRGB(150, 100, 0), 32)
-diagBtn.MouseButton1Click:Connect(function() debugAnimateStructure() end)
+local diagBtn = Widgets.addButton(animTab, t("btn_diagnose"), Color3.fromRGB(150, 100, 0), 32)
+diagBtn.MouseButton1Click:Connect(function() AnimFeature.debug() end)
 
 local animToggleBtn = Instance.new("TextButton")
 animToggleBtn.Size = UDim2.new(1, 0, 0, 30)
@@ -4319,61 +3891,61 @@ animToggleBtn.TextColor3 = Color3.new(1, 1, 1)
 animToggleBtn.TextSize = 12
 animToggleBtn.Font = Enum.Font.GothamBold
 animToggleBtn.Text = t("btn_apply_idle")
-animToggleBtn.LayoutOrder = tabOrder(animTab)
+animToggleBtn.LayoutOrder = Widgets.tabOrder(animTab)
 animToggleBtn.Parent = animTab
 animToggleBtn.MouseButton1Click:Connect(function()
-    animConfig.enabled = not animConfig.enabled
-    animToggleBtn.BackgroundColor3 = animConfig.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
-    if animConfig.enabled then applyForcedIdle() end
+    AnimFeature.config.enabled = not AnimFeature.config.enabled
+    animToggleBtn.BackgroundColor3 = AnimFeature.config.enabled and Color3.fromRGB(0, 130, 60) or Color3.fromRGB(60, 60, 60)
+    if AnimFeature.config.enabled then AnimFeature.applyIdle() end
 end)
 
-local animReapplyBtn = addButton(animTab, t("btn_reapply"), Color3.fromRGB(90, 90, 200), 32)
+local animReapplyBtn = Widgets.addButton(animTab, t("btn_reapply"), Color3.fromRGB(90, 90, 200), 32)
 animReapplyBtn.MouseButton1Click:Connect(function()
-    animConfig.enabled = true
+    AnimFeature.config.enabled = true
     animToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
-    applyForcedIdle()
+    AnimFeature.applyIdle()
 end)
 
-addInfoLabel(animTab, "IDLE toca separado (prioridade alta, sem reiniciar sozinho) e só fica ativo enquanto você tá parado -- solta na hora que anda/corre/pula, então não briga com o jogo. ANDAR/CORRER voltaram a ser 100% do jogo (sem forçação). Não precisa caçar o ID: toque o emote/animação que você já tem e clique CAPTURAR pra preencher o IDLE sozinho. Só funciona com animações que você tem direito de usar -- é permissão do próprio Roblox no ID. Reaplica sozinho se você morrer/respawnar.")
+Widgets.addInfoLabel(animTab, "IDLE toca separado (prioridade alta, sem reiniciar sozinho) e só fica ativo enquanto você tá parado -- solta na hora que anda/corre/pula, então não briga com o jogo. ANDAR/CORRER voltaram a ser 100% do jogo (sem forçação). Não precisa caçar o ID: toque o emote/animação que você já tem e clique CAPTURAR pra preencher o IDLE sozinho. Só funciona com animações que você tem direito de usar -- é permissão do próprio Roblox no ID. Reaplica sozinho se você morrer/respawnar.")
 
 -- --- ABA WEBHOOK ---
 
 local webhookTab = tabFrames.webhook
-addSectionLabel(webhookTab, t("sec_discord_webhook"), Color3.fromRGB(114, 137, 218))
-local webhookUrlBox = addTextField(webhookTab, t("lbl_webhook_url"), "")
+Widgets.addSectionLabel(webhookTab, t("sec_discord_webhook"), Color3.fromRGB(114, 137, 218))
+local webhookUrlBox = Widgets.addTextField(webhookTab, t("lbl_webhook_url"), "")
 webhookUrlBox.FocusLost:Connect(function()
     webhookConfig.url = webhookUrlBox.Text
 end)
-local webhookTestBtn = addButton(webhookTab, t("btn_test"), Color3.fromRGB(90, 90, 200), 32)
+local webhookTestBtn = Widgets.addButton(webhookTab, t("btn_test"), Color3.fromRGB(90, 90, 200), 32)
 webhookTestBtn.MouseButton1Click:Connect(function()
     webhookConfig.url = webhookUrlBox.Text
     sendDiscordWebhook("✅ Teste", "Webhook configurado com sucesso no MEGA RAMP HUB!", Color3.fromRGB(0, 190, 100))
 end)
 
-addDivider(webhookTab)
-addSectionLabel(webhookTab, t("sec_notify_when"), Color3.fromRGB(200, 200, 200))
-webhookToggles.limited = addToggleRow(webhookTab, t("toggle_find_limited"), true)
-webhookToggles.memory = addToggleRow(webhookTab, t("toggle_win_memory"), false)
-webhookToggles.hitslime = addToggleRow(webhookTab, t("toggle_win_hitslime"), false)
-webhookToggles.event = addToggleRow(webhookTab, t("toggle_activate_event"), false)
+Widgets.addDivider(webhookTab)
+Widgets.addSectionLabel(webhookTab, t("sec_notify_when"), Color3.fromRGB(200, 200, 200))
+webhookToggles.limited = Widgets.addToggleRow(webhookTab, t("toggle_find_limited"), true)
+webhookToggles.memory = Widgets.addToggleRow(webhookTab, t("toggle_win_memory"), false)
+webhookToggles.hitslime = Widgets.addToggleRow(webhookTab, t("toggle_win_hitslime"), false)
+webhookToggles.event = Widgets.addToggleRow(webhookTab, t("toggle_activate_event"), false)
 
-addInfoLabel(webhookTab, "Precisa que o executor suporte request/http_request/syn.request pra funcionar. Clique TESTAR pra confirmar que o link tá certo.")
+Widgets.addInfoLabel(webhookTab, "Precisa que o executor suporte request/http_request/syn.request pra funcionar. Clique TESTAR pra confirmar que o link tá certo.")
 
 -- --- ABA JOGADORES ---
 
 local playersTab = tabFrames.players
-addSectionLabel(playersTab, t("sec_players_in_match"), Color3.fromRGB(0, 150, 255))
-playersStatusLabel = addFullLabel(playersTab, t("status_none_normal_cam"), Color3.fromRGB(100, 200, 100))
-local stopSpectateBtnUi = addButton(playersTab, t("btn_stop_spectate"), Color3.fromRGB(150, 0, 0), 32)
-stopSpectateBtnUi.MouseButton1Click:Connect(function() stopSpectate() end)
+Widgets.addSectionLabel(playersTab, t("sec_players_in_match"), Color3.fromRGB(0, 150, 255))
+Freecam.setPlayersStatusLabel(Widgets.addFullLabel(playersTab, t("status_none_normal_cam"), Color3.fromRGB(100, 200, 100)))
+local stopSpectateBtnUi = Widgets.addButton(playersTab, t("btn_stop_spectate"), Color3.fromRGB(150, 0, 0), 32)
+stopSpectateBtnUi.MouseButton1Click:Connect(function() Freecam.stopSpectate() end)
 
-addInfoLabel(playersTab, "Spectate é 100% real: só muda SUA câmera pra seguir o jogador escolhido, seu personagem continua parado onde estava. NÃO dá pra ativar automações (tipo o ciclo do Mega Ramp) no client de outro jogador remotamente -- cada um precisaria rodar o próprio script pra isso.")
+Widgets.addInfoLabel(playersTab, "Spectate é 100% real: só muda SUA câmera pra seguir o jogador escolhido, seu personagem continua parado onde estava. NÃO dá pra ativar automações (tipo o ciclo do Mega Ramp) no client de outro jogador remotamente -- cada um precisaria rodar o próprio script pra isso.")
 
 local rowsContainer = Instance.new("Frame")
 rowsContainer.Size = UDim2.new(1, 0, 0, 0)
 rowsContainer.AutomaticSize = Enum.AutomaticSize.Y
 rowsContainer.BackgroundTransparency = 1
-rowsContainer.LayoutOrder = tabOrder(playersTab)
+rowsContainer.LayoutOrder = Widgets.tabOrder(playersTab)
 rowsContainer.Parent = playersTab
 
 local rowsLayout = Instance.new("UIListLayout")
@@ -4419,7 +3991,7 @@ local function rebuildPlayerRows()
             specBtn.Parent = row
 
             specBtn.MouseButton1Click:Connect(function()
-                startSpectate(plr)
+                Freecam.startSpectate(plr)
             end)
         end
     end
@@ -4442,15 +4014,15 @@ Players.PlayerRemoving:Connect(function() task.wait(0.15) rebuildPlayerRows() en
 
 rebuildPlayerRows()
 
-addDivider(playersTab)
-addSectionLabel(playersTab, t("sec_top5"), Color3.fromRGB(255, 215, 0))
-addInfoLabel(playersTab, "Vem direto do placar Top 5 que o servidor já manda pra todo mundo (remote LeaderboardUpdate) -- não precisei construir nada, só escutei o mesmo remote que o próprio jogo usa pra desenhar aquele painel.")
+Widgets.addDivider(playersTab)
+Widgets.addSectionLabel(playersTab, t("sec_top5"), Color3.fromRGB(255, 215, 0))
+Widgets.addInfoLabel(playersTab, "Vem direto do placar Top 5 que o servidor já manda pra todo mundo (remote LeaderboardUpdate) -- não precisei construir nada, só escutei o mesmo remote que o próprio jogo usa pra desenhar aquele painel.")
 
 local leaderboardRowsContainer = Instance.new("Frame")
 leaderboardRowsContainer.Size = UDim2.new(1, 0, 0, 0)
 leaderboardRowsContainer.AutomaticSize = Enum.AutomaticSize.Y
 leaderboardRowsContainer.BackgroundTransparency = 1
-leaderboardRowsContainer.LayoutOrder = tabOrder(playersTab)
+leaderboardRowsContainer.LayoutOrder = Widgets.tabOrder(playersTab)
 leaderboardRowsContainer.Parent = playersTab
 
 local leaderboardRowsLayout = Instance.new("UIListLayout")
@@ -4522,14 +4094,14 @@ refreshLeaderboardUI()
 -- --- ABA SLIMES: equipar por índice + gift ---
 
 local slimesTab = tabFrames.slimes
-addSectionLabel(slimesTab, t("sec_equip_by_index"), Color3.fromRGB(0, 190, 100))
-addInfoLabel(slimesTab, "Cada slime do inventário tem um índice (posição na lista que o jogo já manda pro client). Clicar EQUIPAR na lista abaixo dispara o MESMO remote que o botão do inventário do jogo dispara -- só que direto, sem precisar abrir a UI. Sobre prever o item da caixa (limited/rainbow etc): não dá -- o resultado é sorteado 100% no servidor e só chega pro client DEPOIS de decidido, sem nenhuma seed/prévia vazando antes. Isso aqui só funciona porque o jogo já deixa o client escolher livremente qual slime equipar/doar -- a raridade da caixa não passa por esse mesmo caminho.")
+Widgets.addSectionLabel(slimesTab, t("sec_equip_by_index"), Color3.fromRGB(0, 190, 100))
+Widgets.addInfoLabel(slimesTab, "Cada slime do inventário tem um índice (posição na lista que o jogo já manda pro client). Clicar EQUIPAR na lista abaixo dispara o MESMO remote que o botão do inventário do jogo dispara -- só que direto, sem precisar abrir a UI. Sobre prever o item da caixa (limited/rainbow etc): não dá -- o resultado é sorteado 100% no servidor e só chega pro client DEPOIS de decidido, sem nenhuma seed/prévia vazando antes. Isso aqui só funciona porque o jogo já deixa o client escolher livremente qual slime equipar/doar -- a raridade da caixa não passa por esse mesmo caminho.")
 
 local slimesRowsContainer = Instance.new("Frame")
 slimesRowsContainer.Size = UDim2.new(1, 0, 0, 0)
 slimesRowsContainer.AutomaticSize = Enum.AutomaticSize.Y
 slimesRowsContainer.BackgroundTransparency = 1
-slimesRowsContainer.LayoutOrder = tabOrder(slimesTab)
+slimesRowsContainer.LayoutOrder = Widgets.tabOrder(slimesTab)
 slimesRowsContainer.Parent = slimesTab
 
 local slimesRowsLayout = Instance.new("UIListLayout")
@@ -4537,12 +4109,12 @@ slimesRowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
 slimesRowsLayout.Padding = UDim.new(0, 3)
 slimesRowsLayout.Parent = slimesRowsContainer
 
-refreshInventoryUI = function()
+local function refreshInventoryUI()
     for _, child in ipairs(slimesRowsContainer:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
 
-    local list = latestInventoryList or {}
+    local list = Inventory.getList() or {}
     if #list == 0 then
         local emptyLbl = Instance.new("TextLabel")
         emptyLbl.Size = UDim2.new(1, 0, 0, 20)
@@ -4559,7 +4131,7 @@ refreshInventoryUI = function()
     for i, item in ipairs(list) do
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, 0, 0, 26)
-        row.BackgroundColor3 = (latestEquippedIndex == i) and Color3.fromRGB(0, 90, 50) or Color3.fromRGB(40, 40, 40)
+        row.BackgroundColor3 = (Inventory.getEquippedIndex() == i) and Color3.fromRGB(0, 90, 50) or Color3.fromRGB(40, 40, 40)
         row.LayoutOrder = i
         row.Parent = slimesRowsContainer
 
@@ -4582,35 +4154,36 @@ refreshInventoryUI = function()
         eqBtn.TextColor3 = Color3.new(1, 1, 1)
         eqBtn.TextSize = 10
         eqBtn.Font = Enum.Font.GothamBold
-        eqBtn.Text = (latestEquippedIndex == i) and t("lbl_equipped") or t("lbl_equip")
+        eqBtn.Text = (Inventory.getEquippedIndex() == i) and t("lbl_equipped") or t("lbl_equip")
         eqBtn.Parent = row
 
         eqBtn.MouseButton1Click:Connect(function()
-            equipSlimeByIndex(i)
+            Inventory.equipByIndex(i)
         end)
     end
 end
 
+Inventory.setRefreshCallback(refreshInventoryUI)
 refreshInventoryUI()
 
-addDivider(slimesTab)
-addSectionLabel(slimesTab, t("sec_manual_equip"), Color3.fromRGB(200, 200, 200))
-local manualIndexBox = addTextField(slimesTab, t("lbl_index_manual"), "0")
-local manualEquipBtn = addButton(slimesTab, t("btn_equip_index"), Color3.fromRGB(0, 120, 200), 32)
+Widgets.addDivider(slimesTab)
+Widgets.addSectionLabel(slimesTab, t("sec_manual_equip"), Color3.fromRGB(200, 200, 200))
+local manualIndexBox = Widgets.addTextField(slimesTab, t("lbl_index_manual"), "0")
+local manualEquipBtn = Widgets.addButton(slimesTab, t("btn_equip_index"), Color3.fromRGB(0, 120, 200), 32)
 manualEquipBtn.MouseButton1Click:Connect(function()
     local idx = tonumber(manualIndexBox.Text)
     if idx then
-        equipSlimeByIndex(math.floor(idx))
+        Inventory.equipByIndex(math.floor(idx))
     else
         addLog("[SLIMES] [!] Índice inválido")
     end
 end)
 
-addDivider(slimesTab)
-addSectionLabel(slimesTab, t("sec_send_gift"), Color3.fromRGB(255, 140, 220))
-local giftPlayerBox = addTextField(slimesTab, t("lbl_gift_target"), "")
-local giftIndexBox = addTextField(slimesTab, t("lbl_gift_index"), "0")
-local giftSendBtn = addButton(slimesTab, t("btn_send_gift"), Color3.fromRGB(200, 60, 160), 32)
+Widgets.addDivider(slimesTab)
+Widgets.addSectionLabel(slimesTab, t("sec_send_gift"), Color3.fromRGB(255, 140, 220))
+local giftPlayerBox = Widgets.addTextField(slimesTab, t("lbl_gift_target"), "")
+local giftIndexBox = Widgets.addTextField(slimesTab, t("lbl_gift_index"), "0")
+local giftSendBtn = Widgets.addButton(slimesTab, t("btn_send_gift"), Color3.fromRGB(200, 60, 160), 32)
 giftSendBtn.MouseButton1Click:Connect(function()
     local target = findPlayerByNameFragment(giftPlayerBox.Text)
     local idx = tonumber(giftIndexBox.Text)
@@ -4624,101 +4197,23 @@ giftSendBtn.MouseButton1Click:Connect(function()
     end
     sendGiftByIndex(target, math.floor(idx))
 end)
-addInfoLabel(slimesTab, "GiftAction:FireServer(\"RequestGift\", jogador, índice) é o MESMO remote que o prompt \"Gift Slime\" dispara ao lado de outro jogador -- pode ser que o servidor exija estar fisicamente perto do prompt dele antes de aceitar; se não funcionar de longe, é o servidor validando distância (bom sinal de segurança).")
+Widgets.addInfoLabel(slimesTab, "GiftAction:FireServer(\"RequestGift\", jogador, índice) é o MESMO remote que o prompt \"Gift Slime\" dispara ao lado de outro jogador -- pode ser que o servidor exija estar fisicamente perto do prompt dele antes de aceitar; se não funcionar de longe, é o servidor validando distância (bom sinal de segurança).")
 
--- --- ABA REMOTE SPY ---
+Widgets.addDivider(slimesTab)
+Widgets.addSectionLabel(slimesTab, "ACEITAR GIFTS AUTOMATICAMENTE", Color3.fromRGB(255, 140, 220))
 
-local spyTab = tabFrames.spy
-addSectionLabel(spyTab, t("sec_remote_spy"), Color3.fromRGB(255, 90, 90))
+Widgets.addFeatureToggleButton(slimesTab, "Ativar Aceitar Gifts Automaticamente", AutoAcceptGifts)
 
-local spyToggleBtn = Instance.new("TextButton")
-spyToggleBtn.Size = UDim2.new(1, 0, 0, 30)
-spyToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-spyToggleBtn.TextColor3 = Color3.new(1, 1, 1)
-spyToggleBtn.TextSize = 12
-spyToggleBtn.Font = Enum.Font.GothamBold
-spyToggleBtn.Text = t("btn_spy_enable")
-spyToggleBtn.LayoutOrder = tabOrder(spyTab)
-spyToggleBtn.Parent = spyTab
-spyToggleBtn.MouseButton1Click:Connect(function()
-    if RemoteSpy.isEnabled() then
-        RemoteSpy.disable()
-        spyToggleBtn.Text = t("btn_spy_enable")
-        spyToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    else
-        local outgoingOk = RemoteSpy.enable()
-        spyToggleBtn.Text = t("btn_spy_disable")
-        spyToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 130, 60)
-        if not outgoingOk then
-            addLog("[SPY] [!] hookmetamethod indisponível nesse executor -- só logs de entrada (OnClientEvent) vão aparecer")
-        end
-    end
-end)
-
-local spyCopyBtn, spyClearBtn = addTwoButtons(spyTab, t("btn_spy_copy"), Color3.fromRGB(90, 90, 200), t("btn_spy_clear"), Color3.fromRGB(150, 0, 0))
-spyCopyBtn.MouseButton1Click:Connect(function()
-    local text = RemoteSpy.getLogText()
-    if typeof(setclipboard) == "function" then
-        local ok = pcall(setclipboard, text)
-        addLog(ok and "[SPY] Log copiado pro clipboard!" or "[SPY] [!] setclipboard falhou -- veja no console")
-    else
-        addLog("[SPY] [!] Esse executor não suporta setclipboard -- veja no console mesmo")
-    end
-end)
-spyClearBtn.MouseButton1Click:Connect(function()
-    RemoteSpy.clear()
-end)
-
-addInfoLabel(spyTab, "OUT = o que SAI do seu client pro servidor (FireServer/InvokeServer) -- inclui chamadas feitas pelo PRÓPRIO JOGO, não só as do hub. IN = o que o servidor manda de volta (OnClientEvent). Mostra as últimas 200 linhas; o log completo também vai pro console (F9). Precisa de hookmetamethod pra ver o OUT -- se o executor não suportar, só o IN aparece (ainda útil pra ver o formato dos dados que o jogo recebe).")
-
-local spyLogLabel = Instance.new("TextLabel")
-spyLogLabel.Size = UDim2.new(1, 0, 0, 0)
-spyLogLabel.AutomaticSize = Enum.AutomaticSize.Y
-spyLogLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
-spyLogLabel.TextColor3 = Color3.fromRGB(0, 230, 120)
-spyLogLabel.TextSize = 9
-spyLogLabel.Font = Enum.Font.Code
-spyLogLabel.TextWrapped = true
-spyLogLabel.TextXAlignment = Enum.TextXAlignment.Left
-spyLogLabel.TextYAlignment = Enum.TextYAlignment.Top
-spyLogLabel.Text = ""
-spyLogLabel.LayoutOrder = tabOrder(spyTab)
-spyLogLabel.Parent = spyTab
-
-local spyPadding = Instance.new("UIPadding")
-spyPadding.PaddingLeft = UDim.new(0, 6)
-spyPadding.PaddingRight = UDim.new(0, 6)
-spyPadding.PaddingTop = UDim.new(0, 6)
-spyPadding.PaddingBottom = UDim.new(0, 6)
-spyPadding.Parent = spyLogLabel
-
-RemoteSpy.setRefreshCallback(function()
-    local text = RemoteSpy.getLogText()
-    spyLogLabel.Text = (text ~= "" and text) or "(vazio -- ative o Spy e vá jogar normalmente pra ver as chamadas aparecerem aqui)"
-end)
-spyLogLabel.Text = "(vazio -- ative o Spy e vá jogar normalmente pra ver as chamadas aparecerem aqui)"
-
-addDivider(spyTab)
-addSectionLabel(spyTab, t("sec_function_spy"), Color3.fromRGB(255, 180, 60))
-
-local captureFnBtn, callFnBtn = addTwoButtons(spyTab, t("btn_capture_fn"), Color3.fromRGB(150, 100, 0), t("btn_call_fn"), Color3.fromRGB(0, 130, 150))
-captureFnBtn.MouseButton1Click:Connect(function()
-    FunctionSpy.capture()
-end)
-callFnBtn.MouseButton1Click:Connect(function()
-    FunctionSpy.callWithCar()
-end)
-
-addInfoLabel(spyTab, "O 'Checkpoint UI: 48 x6000...' que aparece no console não vem de um Touched físico -- é o sistema de sorte da rampa, guiado 100% pelo remote CheckpointLuckUpdate. Por isso Capturar tenta primeiro getconnections nesse remote (e em JumpLuckStart/JumpLuckEnd), igual o SimpleSpy faz, e só cai pro Touched dos checkpoints antigos como último recurso. Captura a função REAL do jogo (sem reimplementar nada) e copia um relatório completo pro clipboard. Se capturou de um remote, essa função recebe (isJackpot, luckValue) do SERVIDOR -- Chamar testa ela com um valor gigante só pra ver o que ela faz LOCALMENTE (não manda nada pro servidor por conta própria); se veio de um Touched, chama passando o carro. Resultado sempre vai pro clipboard.")
+Widgets.addInfoLabel(slimesTab, "Quando alguém te manda um gift, dispara GiftAction:FireServer sozinho com as variantes de aceitar mais prováveis E clica sozinho em qualquer botão de confirmação (Aceitar/OK/Confirmar/Accept/Yes/Sim) que aparecer na tela -- cobre tanto o caso de aceitar direto por remote quanto o de precisar confirmar num popup. Desativar para de aceitar sozinho.")
 
 -- --- ABA CONFIGURACOES ---
 
 local settingsTab = tabFrames.settings
-addSectionLabel(settingsTab, t("settings_title"), Color3.fromRGB(120, 190, 255))
+Widgets.addSectionLabel(settingsTab, t("settings_title"), Color3.fromRGB(120, 190, 255))
 
-local langPtBtn = addButton(settingsTab, "Portugues", Color3.fromRGB(60, 60, 60), 32)
-local langEnBtn = addButton(settingsTab, "English", Color3.fromRGB(60, 60, 60), 32)
-local langEsBtn = addButton(settingsTab, "Espanol", Color3.fromRGB(60, 60, 60), 32)
+local langPtBtn = Widgets.addButton(settingsTab, "Portugues", Color3.fromRGB(60, 60, 60), 32)
+local langEnBtn = Widgets.addButton(settingsTab, "English", Color3.fromRGB(60, 60, 60), 32)
+local langEsBtn = Widgets.addButton(settingsTab, "Espanol", Color3.fromRGB(60, 60, 60), 32)
 
 local langButtons = { pt = langPtBtn, en = langEnBtn, es = langEsBtn }
 
@@ -4740,7 +4235,7 @@ langPtBtn.MouseButton1Click:Connect(function() setLanguage("pt") end)
 langEnBtn.MouseButton1Click:Connect(function() setLanguage("en") end)
 langEsBtn.MouseButton1Click:Connect(function() setLanguage("es") end)
 
-addInfoLabel(settingsTab, t("settings_info"))
+Widgets.addInfoLabel(settingsTab, t("settings_info"))
 
 -- --- RESPONSIVO + MINIMIZAR ---
 
