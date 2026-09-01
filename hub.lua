@@ -457,6 +457,38 @@ local function findMostExpensiveEvent()
     return allEvents[#allEvents]
 end
 
+-- Acha o evento MAIS BARATO entre os que têm o maior CashMultiplier do
+-- catálogo (hoje é x10, ex: REI MILIONÁRIO por 600K) -- em vez de fixar
+-- "10" (que quebraria se o jogo adicionar um multiplicador maior no
+-- futuro), pega o maior CashMultiplier que existir AGORA no
+-- EventConfig e escolhe o mais barato dentro desse grupo.
+local function findCheapestMaxCashEvent()
+    if not EventConfig then return nil end
+    local ok, allEvents = pcall(EventConfig.GetAllEvents)
+    if not ok or type(allEvents) ~= "table" or #allEvents == 0 then return nil end
+
+    local maxCashMultiplier = 1
+    for _, event in ipairs(allEvents) do
+        local mult = tonumber(event.CashMultiplier) or 1
+        if mult > maxCashMultiplier then
+            maxCashMultiplier = mult
+        end
+    end
+
+    local cheapest = nil
+    for _, event in ipairs(allEvents) do
+        local mult = tonumber(event.CashMultiplier) or 1
+        if mult == maxCashMultiplier then
+            local cost = tonumber(event.Cost) or math.huge
+            if not cheapest or cost < (tonumber(cheapest.Cost) or math.huge) then
+                cheapest = event
+            end
+        end
+    end
+
+    return cheapest
+end
+
 -- ========================================
 -- HELPERS COMPARTILHADOS: teleporte, prompt dual-platform, clique de botão
 -- ========================================
@@ -492,6 +524,21 @@ end
 local isPcPlatform = UserInputService.KeyboardEnabled
 
 local function triggerPromptGeneric(prompt)
+    -- Prioriza fireproximityprompt (função nativa de executor) quando
+    -- disponível, em qualquer plataforma: ela dispara ESSE prompt
+    -- específico direto, sem passar pela tecla física. A simulação de
+    -- tecla (abaixo) aperta e solta E de verdade, o que ativa QUALQUER
+    -- prompt que esteja focado/no alcance no momento -- se houver mais de
+    -- um prompt próximo (ex: dois slots da base ocupados perto um do
+    -- outro), apertar E várias vezes seguidas pode acabar ativando
+    -- prompts DIFERENTES em vez do mesmo, dando resultados ambíguos (foi
+    -- o que causou um delta de +2/-2 no teste de duplicação em vez de um
+    -- resultado claro de +1/-1 num único prompt).
+    if typeof(fireproximityprompt) == "function" then
+        local ok = pcall(fireproximityprompt, prompt)
+        if ok then return true end
+    end
+
     if isPcPlatform then
         local keyCode = prompt.KeyboardKeyCode
         if not keyCode or keyCode == Enum.KeyCode.Unknown then
@@ -507,10 +554,6 @@ local function triggerPromptGeneric(prompt)
             VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
         end)
         return true
-    end
-
-    if typeof(fireproximityprompt) == "function" then
-        return pcall(fireproximityprompt, prompt)
     end
 
     return false
@@ -660,6 +703,428 @@ local function buildAutoAcceptGiftsFeature()
 end
 
 local AutoAcceptGifts = buildAutoAcceptGiftsFeature()
+
+-- ========================================
+-- TESTE DE DUPLICAÇÃO NA BASE (experimental): cada slot da base tem dois
+-- ProximityPrompt nativos do Roblox -- "PlacePrompt" (posicionar um slime
+-- do inventário no slot livre) e "CollectPrompt" (pegar o slime de volta
+-- pro inventário). Analisando o .rbxlx completo do jogo (Save As direto
+-- do Studio, incluindo tudo que o client vê): NENHUM LocalScript
+-- referencia "PlacePrompt"/"CollectPrompt"/"BaseSlot" como string em
+-- lugar nenhum -- ou seja, não existe um RemoteEvent customizado pra
+-- essa ação, o próprio ProximityPrompt já replica o Triggered pro
+-- servidor nativamente, e a lógica de decidir o que fazer roda 100% no
+-- servidor. Isso significa que NÃO dá pra forjar/interceptar um remote
+-- aqui como fizemos em outras features -- a única forma de testar uma
+-- duplicação é via CONDIÇÃO DE CORRIDA: disparar o mesmo prompt várias
+-- vezes bem mais rápido do que um clique humano normal, mais rápido do
+-- que o servidor provavelmente consegue processar/debounce, e comparar
+-- o tamanho do inventário antes/depois. É 100% experimental -- pode não
+-- dar em nada (bom sinal de segurança do jogo) ou revelar uma falha
+-- real. O resultado reportado é sempre o que realmente aconteceu, nunca
+-- uma suposição de que funcionou.
+-- ========================================
+
+local function buildSlimeDupeTestFeature()
+    local testing = false
+    local statusLabel = nil
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
+        end
+    end
+
+    local function findPlayerBaseModel()
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "PlayerBaseNameSign" then
+                local ok, ownerId = pcall(function() return obj:GetAttribute("OwnerUserId") end)
+                if ok and ownerId == LocalPlayer.UserId then
+                    return obj:FindFirstAncestorOfClass("Model") or obj:FindFirstAncestorOfClass("Folder")
+                end
+            end
+        end
+        return nil
+    end
+
+    local function findPromptInBase(baseModel, promptName)
+        if not baseModel then return nil end
+        for _, obj in ipairs(baseModel:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") and obj.Name == promptName then
+                return obj
+            end
+        end
+        return nil
+    end
+
+    -- Disparar o ProximityPrompt só ABRE uma tela de confirmação (mostra
+    -- o slime + um botão tipo "COLETAR"/"POSICIONAR") -- confirmado pelo
+    -- usuário testando ("o test collect só abre o menu e fica ai"). A
+    -- ação de verdade só acontece quando esse botão de DENTRO da tela é
+    -- clicado, então o spam precisa mirar nesse botão, não no prompt.
+    local CONFIRM_KEYWORDS = {
+        "coletar", "collect", "posicionar", "posiziona", "place", "confirmar", "confirm",
+    }
+
+    -- A tela de revelação de caixa (auto-click da caixa na aba Rampa, que
+    -- roda SOZINHA e independente desse teste) também tem um botão
+    -- "COLETAR" -- só que do lado de 6 botões "MÁX". Se a caixa abrir por
+    -- coincidência durante o teste, buscar só por palavra-chave ia
+    -- confundir as duas telas e clicar no botão errado (o da caixa, que
+    -- não faz nada útil aqui, e prendia o teste "aberto" sem terminar).
+    -- Detectar os irmãos "MÁX" filtra esse caso.
+    local function isLikelyBoxRevealButton(button)
+        local container = button.Parent
+        if not container then return false end
+        for _, sibling in ipairs(container:GetChildren()) do
+            if sibling:IsA("GuiButton") and sibling ~= button then
+                local siblingText = tostring(sibling.Text or ""):lower()
+                if siblingText:find("máx", 1, true) or siblingText:find("max", 1, true) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function snapshotButtons()
+        local set = {}
+        for _, obj in ipairs(playerGui:GetDescendants()) do
+            if obj:IsA("GuiButton") then
+                set[obj] = true
+            end
+        end
+        return set
+    end
+
+    -- Só considera botões que NÃO existiam antes de disparar o prompt --
+    -- assim, qualquer outra tela que já estivesse aberta (ou que abra por
+    -- coincidência de outro sistema, tipo a caixa) não é confundida com a
+    -- confirmação que ESSE prompt específico acabou de abrir.
+    local function findConfirmButton(existingButtons)
+        for _, obj in ipairs(playerGui:GetDescendants()) do
+            if obj:IsA("GuiButton") and not existingButtons[obj] then
+                local text = tostring(obj.Text or ""):lower()
+                for _, kw in ipairs(CONFIRM_KEYWORDS) do
+                    if text ~= "" and text:find(kw, 1, true) and not isLikelyBoxRevealButton(obj) then
+                        return obj
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function waitForConfirmButton(timeoutSeconds, existingButtons)
+        local start = tick()
+        while (tick() - start) < timeoutSeconds do
+            local btn = findConfirmButton(existingButtons)
+            if btn then return btn end
+            task.wait(0.1)
+        end
+        return nil
+    end
+
+    local function waitForInventoryList(timeoutSeconds)
+        local start = tick()
+        while (tick() - start) < timeoutSeconds do
+            local list = Inventory.getList()
+            if list then return list end
+            task.wait(0.1)
+        end
+        return nil
+    end
+
+    local function rapidFireAction(prompt, times)
+        local existingButtons = snapshotButtons()
+        triggerPromptGeneric(prompt)
+
+        local confirmBtn = waitForConfirmButton(2.5, existingButtons)
+        if not confirmBtn then
+            -- Nenhuma tela de confirmação apareceu -- talvez essa ação
+            -- não precise de uma (spam direto no prompt como fallback).
+            local firedCount = 0
+            for i = 1, times do
+                if triggerPromptGeneric(prompt) then firedCount = firedCount + 1 end
+            end
+            return firedCount, false
+        end
+
+        local firedCount = 0
+        for i = 1, times do
+            if simulateButtonClick(confirmBtn) then firedCount = firedCount + 1 end
+        end
+        return firedCount, true
+    end
+
+    local function runCollectTest(times)
+        if testing then
+            addLog("[DUPE-TEST] [!] Já tem um teste rodando, espera terminar")
+            return
+        end
+        testing = true
+
+        -- Tudo dentro de um pcall: sem isso, qualquer erro no meio do
+        -- teste (ex: um Instance sumindo no meio do caminho) deixava
+        -- `testing` preso em true pra sempre, e todo clique seguinte em
+        -- Testar Collect/Place virava um no-op silencioso -- exatamente o
+        -- "fica travado nisso" que aparecia depois de um tempo.
+        local ok, err = pcall(function()
+            local baseModel = findPlayerBaseModel()
+            if not baseModel then
+                addLog("[DUPE-TEST] [!] Não achei sua base (PlayerBaseNameSign com OwnerUserId seu não encontrado)")
+                return
+            end
+
+            local prompt = findPromptInBase(baseModel, "CollectPrompt")
+            if not prompt then
+                addLog("[DUPE-TEST] [!] Nenhum CollectPrompt encontrado na sua base (base vazia? nenhum slime posicionado?)")
+                return
+            end
+
+            -- Espera um InventoryUpdate de verdade em vez de tratar "ainda
+            -- não chegou nenhum" como 0 -- foi isso que causou aquele
+            -- "antes: 0, depois: 107, POSSÍVEL DUPLICAÇÃO" falso: o
+            -- inventário JÁ tinha 107 itens, só não tínhamos recebido o
+            -- primeiro InventoryUpdate ainda quando o teste começou.
+            local before = waitForInventoryList(3)
+            if not before then
+                addLog("[DUPE-TEST] [!] Inventário ainda não carregou -- abra o inventário no jogo 1x e tente de novo")
+                return
+            end
+            local beforeCount = #before
+            addLog("[DUPE-TEST] [*] Inventário antes: " .. beforeCount .. " itens -- abrindo confirmação e clicando COLETAR " .. times .. "x seguidas...")
+            setStatus("Status: TESTANDO COLLECT...", Color3.fromRGB(255, 200, 0))
+
+            local fired, usedModal = rapidFireAction(prompt, times)
+
+            task.wait(1.5)
+            local after = Inventory.getList() or before
+            local afterCount = #after
+            local delta = afterCount - beforeCount
+
+            addLog("[DUPE-TEST] [*] " .. (usedModal and "Cliques no botão de confirmação" or "Disparos no prompt (sem modal)") .. ": " .. fired .. "/" .. times)
+            addLog("[DUPE-TEST] [*] Inventário depois: " .. afterCount .. " itens (delta = " .. delta .. ")")
+
+            if delta > 1 then
+                addLog("[DUPE-TEST] [!!!] POSSÍVEL DUPLICAÇÃO -- inventário ganhou " .. delta .. " itens de UMA base ocupada (esperado no máximo +1)")
+                setStatus("Status: POSSÍVEL DUPE! (+" .. delta .. ")", Color3.fromRGB(255, 60, 60))
+            elseif delta == 1 then
+                addLog("[DUPE-TEST] [✓] Normal -- só +1 item, servidor rejeitou os cliques extras (sem brecha aparente)")
+                setStatus("Status: OK, sem dupe (+1)", Color3.fromRGB(100, 200, 100))
+            else
+                addLog("[DUPE-TEST] [?] Delta " .. delta .. " -- inesperado (modal pode ter ficado aberto sem clicar, ou pegou o botão de outra tela), confira manualmente")
+                setStatus("Status: RESULTADO INESPERADO (Δ" .. delta .. ")", Color3.fromRGB(255, 140, 0))
+            end
+        end)
+
+        if not ok then
+            addLog("[DUPE-TEST] [!] Erro durante o teste: " .. tostring(err))
+            setStatus("Status: ERRO NO TESTE", Color3.fromRGB(255, 60, 60))
+        end
+
+        testing = false
+    end
+
+    local function runPlaceTest(times)
+        if testing then
+            addLog("[DUPE-TEST] [!] Já tem um teste rodando, espera terminar")
+            return
+        end
+        testing = true
+
+        local ok, err = pcall(function()
+            local baseModel = findPlayerBaseModel()
+            if not baseModel then
+                addLog("[DUPE-TEST] [!] Não achei sua base (PlayerBaseNameSign com OwnerUserId seu não encontrado)")
+                return
+            end
+
+            local prompt = findPromptInBase(baseModel, "PlacePrompt")
+            if not prompt then
+                addLog("[DUPE-TEST] [!] Nenhum PlacePrompt encontrado na sua base (nenhum slot livre? base cheia?)")
+                return
+            end
+
+            local before = waitForInventoryList(3)
+            if not before then
+                addLog("[DUPE-TEST] [!] Inventário ainda não carregou -- abra o inventário no jogo 1x e tente de novo")
+                return
+            end
+            local beforeCount = #before
+            addLog("[DUPE-TEST] [*] Inventário antes: " .. beforeCount .. " itens -- abrindo confirmação e clicando POSICIONAR " .. times .. "x seguidas (equipe um slime antes de testar)...")
+            setStatus("Status: TESTANDO PLACE...", Color3.fromRGB(255, 200, 0))
+
+            local fired, usedModal = rapidFireAction(prompt, times)
+
+            task.wait(1.5)
+            local after = Inventory.getList() or before
+            local afterCount = #after
+            local delta = beforeCount - afterCount
+
+            addLog("[DUPE-TEST] [*] " .. (usedModal and "Cliques no botão de confirmação" or "Disparos no prompt (sem modal)") .. ": " .. fired .. "/" .. times)
+            addLog("[DUPE-TEST] [*] Inventário depois: " .. afterCount .. " itens (removidos = " .. delta .. ")")
+
+            if delta > 1 then
+                addLog("[DUPE-TEST] [!] Inventário perdeu " .. delta .. " itens de UM slot livre -- confira se sobrou mais de um slime físico na base (isso indicaria duplicação: 1 removido do inventário virou N na base)")
+                setStatus("Status: CONFIRA A BASE (-" .. delta .. " no inv.)", Color3.fromRGB(255, 140, 0))
+            elseif delta == 1 then
+                addLog("[DUPE-TEST] [✓] Normal -- só -1 item, servidor rejeitou os cliques extras (sem brecha aparente)")
+                setStatus("Status: OK, sem dupe (-1)", Color3.fromRGB(100, 200, 100))
+            else
+                addLog("[DUPE-TEST] [?] Delta " .. delta .. " -- inesperado (talvez não tinha slime equipado, ou pegou o botão de outra tela), confira manualmente")
+                setStatus("Status: RESULTADO INESPERADO (Δ" .. delta .. ")", Color3.fromRGB(255, 140, 0))
+            end
+        end)
+
+        if not ok then
+            addLog("[DUPE-TEST] [!] Erro durante o teste: " .. tostring(err))
+            setStatus("Status: ERRO NO TESTE", Color3.fromRGB(255, 60, 60))
+        end
+
+        testing = false
+    end
+
+    return {
+        testCollect = function() task.spawn(runCollectTest, 15) end,
+        testPlace = function() task.spawn(runPlaceTest, 15) end,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+        isTesting = function() return testing end,
+    }
+end
+
+local SlimeDupeTest = buildSlimeDupeTestFeature()
+
+-- ========================================
+-- COLETAR SLIMES DE TODAS AS BASES (outros jogadores)
+-- ========================================
+
+local function buildActivateEventHereFeature()
+    local statusLabel = nil
+    local activating = false
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
+        end
+    end
+
+    local function findNearestCollectPrompt()
+        local character = LocalPlayer.Character
+        if not character then return nil end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return nil end
+
+        local nearest = nil
+        local minDistance = 100
+
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") and obj.Name == "CollectPrompt" then
+                local promptPos = getPromptWorldPosition(obj)
+                if promptPos then
+                    local distance = (hrp.Position - promptPos).Magnitude
+                    if distance < minDistance then
+                        nearest = obj
+                        minDistance = distance
+                    end
+                end
+            end
+        end
+
+        return nearest, minDistance
+    end
+
+    local function activateHere()
+        if activating then
+            addLog("[ATIVAR-EVENTO] [!] Já está ativando, aguarde terminar")
+            return
+        end
+
+        activating = true
+        setStatus("Status: ATIVANDO...", Color3.fromRGB(255, 200, 0))
+        addLog("[ATIVAR-EVENTO] [*] Procurando CollectPrompt próximo...")
+
+        local ok, err = pcall(function()
+            local prompt, distance = findNearestCollectPrompt()
+            if not prompt then
+                addLog("[ATIVAR-EVENTO] [!] Nenhum CollectPrompt encontrado por perto (máx 100 studs)")
+                setStatus("Status: PROMPT NÃO ENCONTRADO", Color3.fromRGB(255, 60, 60))
+                return
+            end
+
+            addLog("[ATIVAR-EVENTO] [*] Prompt encontrado a " .. string.format("%.1f", distance) .. " studs -- disparando...")
+
+            local existingButtons = {}
+            for _, obj in ipairs(playerGui:GetDescendants()) do
+                if obj:IsA("GuiButton") then
+                    existingButtons[obj] = true
+                end
+            end
+
+            triggerPromptGeneric(prompt)
+            task.wait(1.2)
+
+            local CONFIRM_KEYWORDS = {
+                "coletar", "collect", "confirmar", "confirm",
+                "gestisci", "gerenciar", "manage", "retirar", "withdraw", "vender", "sell",
+            }
+            local confirmBtn = nil
+
+            -- Debug: listar TODOS os botões novos
+            local newButtonCount = 0
+            for _, obj in ipairs(playerGui:GetDescendants()) do
+                if obj:IsA("GuiButton") and not existingButtons[obj] then
+                    newButtonCount = newButtonCount + 1
+                    local text = tostring(obj.Text or ""):lower()
+                    addLog("[ATIVAR-EVENTO] [DEBUG] Botão novo encontrado: '" .. text .. "'")
+
+                    for _, kw in ipairs(CONFIRM_KEYWORDS) do
+                        if text ~= "" and text:find(kw, 1, true) then
+                            confirmBtn = obj
+                            break
+                        end
+                    end
+                    if confirmBtn then break end
+                end
+            end
+
+            if newButtonCount == 0 then
+                addLog("[ATIVAR-EVENTO] [!] Nenhum botão novo apareceu na tela")
+            end
+
+            if confirmBtn then
+                task.wait(0.2)
+                if simulateButtonClick(confirmBtn) then
+                    addLog("[ATIVAR-EVENTO] [✓] Botão clicado com sucesso!")
+                    setStatus("Status: ATIVADO!", Color3.fromRGB(100, 200, 100))
+                else
+                    addLog("[ATIVAR-EVENTO] [!] Falha ao clicar no botão")
+                    setStatus("Status: ERRO AO CLICAR", Color3.fromRGB(255, 60, 60))
+                end
+            else
+                addLog("[ATIVAR-EVENTO] [!] Botão de confirmação não encontrado")
+                setStatus("Status: BOTÃO NÃO ENCONTRADO", Color3.fromRGB(255, 140, 0))
+            end
+        end)
+
+        if not ok then
+            addLog("[ATIVAR-EVENTO] [!] Erro: " .. tostring(err))
+            setStatus("Status: ERRO", Color3.fromRGB(255, 60, 60))
+        end
+
+        activating = false
+    end
+
+    return {
+        activate = function() task.spawn(activateHere) end,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+        isActivating = function() return activating end,
+    }
+end
+
+local ActivateEventHere = buildActivateEventHereFeature()
 
 -- ========================================
 -- ALERTA: glitterrainbow/limited
@@ -995,19 +1460,19 @@ end
 
 local MiniGameStick = buildMiniGameStickFeature()
 
-local function activateMostExpensiveEvent(stayAtShop, noTeleport)
+local function activateMostExpensiveEvent(stayAtShop, noTeleport, eventOverride)
     if not Remotes.eventShopAction then
         addLog("[EVENTO] [!] EventShopAction não encontrado")
         return false
     end
 
-    local event = findMostExpensiveEvent()
+    local event = eventOverride or findMostExpensiveEvent()
     if not event then
-        addLog("[EVENTO] [!] Não consegui achar o evento mais caro")
+        addLog("[EVENTO] [!] Não consegui achar o evento pra ativar")
         return false
     end
 
-    addLog("[EVENTO] [*] Ativando evento mais caro: " .. tostring(event.Id) .. " (custo " .. tostring(event.Cost) .. ")")
+    addLog("[EVENTO] [*] Ativando evento: " .. tostring(event.Id) .. " (custo " .. tostring(event.Cost) .. ")")
 
     pcall(function() LocalPlayer:SetAttribute("EventShopMenuOpen", true) end)
     if Remotes.selectInventoryItem then
@@ -1763,8 +2228,11 @@ local function startHitSlimeLoop()
             -- Bata o Slime roda 100% por remote (não precisa estar perto
             -- de nada), e o usuário já fica parado no local de abrir o
             -- evento antes de clicar Jogar, então mover o personagem só
-            -- atrapalharia.
-            activateMostExpensiveEvent(true, true)
+            -- atrapalharia. Aqui usa o evento mais barato com o maior
+            -- CashMultiplier do catálogo (não o mais caro geral) -- o
+            -- Bata o Slime quer o bônus de Cash, não gastar EventCoins à
+            -- toa num evento caro que não ajuda a farmar mais rápido.
+            activateMostExpensiveEvent(true, true, findCheapestMaxCashEvent())
             if not hitSlimeConfig.running then break end
             waitWhileRunning(EVENT_DURATION_SECONDS + EVENT_DURATION_BUFFER_SECONDS, hitSlimeConfig)
         end
@@ -2706,17 +3174,20 @@ end
 MegaJumpInsta = buildMegaJumpInstaFeature()
 
 -- ========================================
--- CHECKPOINT 92 -> CHECKPOINT 1 + LANDINGZONE1 -> LANDINGZONE3: mesmo
+-- CHECKPOINT FINAL -> CHECKPOINT 1 + LANDINGZONE1 -> LANDINGZONE3: mesmo
 -- toggle, dois movimentos independentes do Mega Jump Insta -- move a
--- part do Checkpoint 92 pra cima do Checkpoint 1 E a LandingZone1 pra
--- cima da LandingZone3 (mantendo a rotação original de cada uma), sem
--- mexer em JumpCar, CarSpawn, CarResetZones nem criar cópias em
--- quadrado. 100% client-side (só a SUA tela vê elas nessa posição nova).
+-- part do ÚLTIMO checkpoint numerado (hoje é 92, mas pega dinamicamente
+-- o maior número que existir na pasta Checkpoints -- se o jogo adicionar
+-- 93, 94 etc no futuro, continua pegando o certo sozinho) pra cima do
+-- Checkpoint 1, E a LandingZone1 pra cima da LandingZone3 (mantendo a
+-- rotação original de cada uma), sem mexer em JumpCar, CarSpawn,
+-- CarResetZones nem criar cópias em quadrado. 100% client-side (só a SUA
+-- tela vê elas nessa posição nova).
 -- ========================================
 
 local function buildCheckpoint92To1Feature()
     local enabled = false
-    local saved92 = nil
+    local savedFinal = nil
     local savedLandingZone1 = nil
 
     local function findCheckpointByNumber(number)
@@ -2733,6 +3204,21 @@ local function buildCheckpoint92To1Feature()
         return child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
     end
 
+    local function findMaxCheckpoint()
+        local folder = Workspace:FindFirstChild("Checkpoints", true)
+        if not folder then return nil, nil end
+        local maxNumber, maxChild = nil, nil
+        for _, c in ipairs(folder:GetChildren()) do
+            local n = tonumber(c.Name)
+            if n and (not maxNumber or n > maxNumber) then
+                maxNumber, maxChild = n, c
+            end
+        end
+        if not maxChild then return nil, nil end
+        local part = maxChild:IsA("BasePart") and maxChild or maxChild:FindFirstChildWhichIsA("BasePart", true)
+        return part, maxNumber
+    end
+
     local function findLandingZoneByNumber(number)
         local direct = Workspace:FindFirstChild("LandingZone" .. number, true)
         if not direct then return nil end
@@ -2743,42 +3229,42 @@ local function buildCheckpoint92To1Feature()
     local function enable()
         if enabled then return end
 
-        local checkpoint92 = findCheckpointByNumber(92)
+        local checkpointFinal, finalNumber = findMaxCheckpoint()
         local checkpoint1 = findCheckpointByNumber(1)
         local landingZone1 = findLandingZoneByNumber(1)
         local landingZone3 = findLandingZoneByNumber(3)
 
-        if not checkpoint92 or not checkpoint1 then
-            addLog("[CHECKPOINT-92-TO-1] [!] Não achei tudo (Checkpoint92=" .. tostring(checkpoint92 ~= nil)
+        if not checkpointFinal or not checkpoint1 then
+            addLog("[CHECKPOINT-FINAL-TO-1] [!] Não achei tudo (CheckpointFinal=" .. tostring(checkpointFinal ~= nil)
                 .. ", Checkpoint1=" .. tostring(checkpoint1 ~= nil) .. ")")
             return
         end
 
-        saved92 = { part = checkpoint92, cframe = checkpoint92.CFrame }
+        savedFinal = { part = checkpointFinal, cframe = checkpointFinal.CFrame }
 
-        local rotation92 = checkpoint92.CFrame - checkpoint92.CFrame.Position
-        checkpoint92.CFrame = CFrame.new(checkpoint1.Position) * rotation92
+        local rotationFinal = checkpointFinal.CFrame - checkpointFinal.CFrame.Position
+        checkpointFinal.CFrame = CFrame.new(checkpoint1.Position) * rotationFinal
 
         if landingZone1 and landingZone3 then
             savedLandingZone1 = { part = landingZone1, cframe = landingZone1.CFrame }
             local rotationLZ = landingZone1.CFrame - landingZone1.CFrame.Position
             landingZone1.CFrame = CFrame.new(landingZone3.Position) * rotationLZ
-            addLog("[CHECKPOINT-92-TO-1] [✓] LandingZone1 movida pra cima da LandingZone3 (só na sua tela)")
+            addLog("[CHECKPOINT-FINAL-TO-1] [✓] LandingZone1 movida pra cima da LandingZone3 (só na sua tela)")
         else
-            addLog("[CHECKPOINT-92-TO-1] [!] LandingZone1/LandingZone3 não encontradas (seguindo sem mover)")
+            addLog("[CHECKPOINT-FINAL-TO-1] [!] LandingZone1/LandingZone3 não encontradas (seguindo sem mover)")
         end
 
         enabled = true
-        addLog("[CHECKPOINT-92-TO-1] [✓] Checkpoint 92 movido pra cima do Checkpoint 1 (só na sua tela)")
+        addLog("[CHECKPOINT-FINAL-TO-1] [✓] Checkpoint " .. finalNumber .. " (o último) movido pra cima do Checkpoint 1 (só na sua tela)")
     end
 
     local function disable()
         if not enabled then return end
 
-        if saved92 and saved92.part.Parent then
-            saved92.part.CFrame = saved92.cframe
+        if savedFinal and savedFinal.part.Parent then
+            savedFinal.part.CFrame = savedFinal.cframe
         end
-        saved92 = nil
+        savedFinal = nil
 
         if savedLandingZone1 and savedLandingZone1.part.Parent then
             savedLandingZone1.part.CFrame = savedLandingZone1.cframe
@@ -2786,7 +3272,7 @@ local function buildCheckpoint92To1Feature()
         savedLandingZone1 = nil
 
         enabled = false
-        addLog("[CHECKPOINT-92-TO-1] Restaurado -- Checkpoint 92 e LandingZone1 de volta pro lugar original")
+        addLog("[CHECKPOINT-FINAL-TO-1] Restaurado -- checkpoint final e LandingZone1 de volta pro lugar original")
     end
 
     local function toggle()
@@ -3031,6 +3517,50 @@ end
 
 local ExtraGravity = buildExtraGravityFeature()
 
+-- ========================================
+-- DESTRUIR CARRO: deleta a model do carro do player, deixando ele andar livre
+-- ========================================
+
+local function buildDestroyCarFeature()
+    local statusLabel = nil
+
+    local function setStatus(text, color)
+        if statusLabel then
+            statusLabel.Text = text
+            statusLabel.TextColor3 = color
+        end
+    end
+
+    local function destroyCar()
+        local car = findPlayerCarModel()
+        if not car then
+            addLog("[CARRO] [!] Carro não encontrado")
+            setStatus("Status: CARRO NÃO ENCONTRADO", Color3.fromRGB(255, 100, 100))
+            return false
+        end
+
+        local ok = pcall(function()
+            car:Destroy()
+        end)
+
+        if ok then
+            addLog("[CARRO] [✓] Carro destruído! Você agora pode andar livre.")
+            setStatus("Status: CARRO DESTRUÍDO ✓", Color3.fromRGB(100, 200, 100))
+            return true
+        else
+            addLog("[CARRO] [!] Erro ao destruir o carro")
+            setStatus("Status: ERRO AO DESTRUIR", Color3.fromRGB(255, 100, 100))
+            return false
+        end
+    end
+
+    return {
+        destroy = destroyCar,
+        setStatusLabel = function(lbl) statusLabel = lbl end,
+    }
+end
+
+local DestroyCar = buildDestroyCarFeature()
 
 -- ========================================
 -- ANIMAÇÕES CUSTOM: edita os IDs de idle/andar/correr DENTRO do script
@@ -3795,11 +4325,11 @@ end)
 Widgets.addInfoLabel(carTab, "Clona o checkpoint de maior número existente e cria N novos checkpoints em sequência (máximo+1, máximo+2, ...), já ligados no mesmo remote do jogo. Como o servidor só parece premiar quando o número sobe, isso testa se dá pra continuar ganhando além do checkpoint final da pista. Disparar Automaticamente teleporta seu personagem até cada um, esperando mais de 1s entre eles.")
 
 Widgets.addDivider(carTab)
-Widgets.addSectionLabel(carTab, "CHECKPOINT 92 -> CHECKPOINT 1", Color3.fromRGB(255, 100, 220))
+Widgets.addSectionLabel(carTab, "CHECKPOINT FINAL -> CHECKPOINT 1", Color3.fromRGB(255, 100, 220))
 
-Widgets.addFeatureToggleButton(carTab, "Mover Checkpoint 92 pro Checkpoint 1", Checkpoint92To1)
+Widgets.addFeatureToggleButton(carTab, "Mover Checkpoint Final pro Checkpoint 1", Checkpoint92To1)
 
-Widgets.addInfoLabel(carTab, "Move a part do Checkpoint 92 (o multiplicador final) pra cima do Checkpoint 1 E a LandingZone1 pra cima da LandingZone3, mantendo a rotação original de cada uma -- independente do Mega Jump Insta, sem mexer em JumpCar/CarSpawn. 100% client-side. Desativar volta as duas pro lugar original.")
+Widgets.addInfoLabel(carTab, "Move a part do ÚLTIMO checkpoint numerado (pega dinamicamente o maior número da pasta Checkpoints -- hoje é 92, mas continua certo sozinho se o jogo adicionar 93, 94 etc no futuro) pra cima do Checkpoint 1 E a LandingZone1 pra cima da LandingZone3, mantendo a rotação original de cada uma -- independente do Mega Jump Insta, sem mexer em JumpCar/CarSpawn. 100% client-side. Desativar volta as duas pro lugar original.")
 
 Widgets.addDivider(carTab)
 Widgets.addSectionLabel(carTab, "MINI PARKOUR - LOOP AUTOMÁTICO", Color3.fromRGB(255, 140, 60))
@@ -3860,6 +4390,18 @@ Widgets.addFeatureToggleButton(carTab, "Ativar Queda Rápida", ExtraGravity)
 ExtraGravity.setStatusLabel(Widgets.addFullLabel(carTab, "Status: DESLIGADO", Color3.fromRGB(100, 200, 100)))
 
 Widgets.addInfoLabel(carTab, "O pulo do JumpCar em si vem PRONTO do servidor (não dá pra reduzir a distância), mas a queda DEPOIS do pulo roda com física local, então isso soma uma velocidade extra pra baixo em cima do carro todo Heartbeat -- ele desce mais rápido depois de pular, sem afetar a dirigibilidade normal (a colisão com o chão já cancela essa velocidade sozinha). Editar o valor só tem efeito na PRÓXIMA vez que ativar.")
+
+Widgets.addDivider(carTab)
+Widgets.addSectionLabel(carTab, "DESTRUIR CARRO", Color3.fromRGB(255, 100, 100))
+
+local destroyCarBtn = Widgets.addButton(carTab, "Destruir Carro (Deletar Model)", Color3.fromRGB(200, 50, 50), 36)
+destroyCarBtn.MouseButton1Click:Connect(function()
+    DestroyCar.destroy()
+end)
+
+DestroyCar.setStatusLabel(Widgets.addFullLabel(carTab, "Status: PRONTO PÁRA DELETAR", Color3.fromRGB(100, 200, 100)))
+
+Widgets.addInfoLabel(carTab, "Deleta a model do carro do player, deixando você andar livre sem o veículo. Use quando quiser se mover a pé. Não dá pra recuperar depois -- vai ter que sair e entrar de novo no jogo pro carro reaparece.")
 
 -- --- ABA ANIM ---
 
@@ -4205,6 +4747,29 @@ Widgets.addSectionLabel(slimesTab, "ACEITAR GIFTS AUTOMATICAMENTE", Color3.fromR
 Widgets.addFeatureToggleButton(slimesTab, "Ativar Aceitar Gifts Automaticamente", AutoAcceptGifts)
 
 Widgets.addInfoLabel(slimesTab, "Quando alguém te manda um gift, dispara GiftAction:FireServer sozinho com as variantes de aceitar mais prováveis E clica sozinho em qualquer botão de confirmação (Aceitar/OK/Confirmar/Accept/Yes/Sim) que aparecer na tela -- cobre tanto o caso de aceitar direto por remote quanto o de precisar confirmar num popup. Desativar para de aceitar sozinho.")
+
+Widgets.addDivider(slimesTab)
+Widgets.addSectionLabel(slimesTab, "TESTE DE DUPLICACAO NA BASE (experimental)", Color3.fromRGB(255, 90, 90))
+
+local dupeTestCollectBtn, dupeTestPlaceBtn = Widgets.addTwoButtons(slimesTab, "Testar Collect (15x rapido)", Color3.fromRGB(150, 0, 0), "Testar Place (15x rapido)", Color3.fromRGB(150, 0, 0))
+dupeTestCollectBtn.MouseButton1Click:Connect(function() SlimeDupeTest.testCollect() end)
+dupeTestPlaceBtn.MouseButton1Click:Connect(function() SlimeDupeTest.testPlace() end)
+
+SlimeDupeTest.setStatusLabel(Widgets.addFullLabel(slimesTab, "Status: PARADO", Color3.fromRGB(100, 200, 100)))
+
+Widgets.addInfoLabel(slimesTab, "EXPERIMENTAL: o ProximityPrompt so abre uma tela de confirmacao (mostra o slime + botao COLETAR/POSICIONAR) -- a acao de verdade e esse botao de DENTRO da tela, entao isso dispara o prompt 1x, espera a tela abrir, e clica nesse botao 15x bem rapido (mais rapido que um clique humano) pra testar condicao de corrida no servidor. TESTAR COLLECT precisa de um slime JA posicionado na sua base. TESTAR PLACE precisa de um slot LIVRE e um slime EQUIPADO na mao. Compara o inventario antes/depois e avisa se sobrou mais item do que deveria -- se der +1/-1 normal, nao achou brecha. Roda uma vez de cada, olha o log. IMPORTANTE: pare o ciclo automatico da aba Rampa antes de testar -- a tela de abrir caixa (COLETAR + 6x MAX) pode abrir por cima e atrapalhar.")
+
+Widgets.addDivider(slimesTab)
+Widgets.addSectionLabel(slimesTab, "ATIVAR EVENTO (ONDE VOCÊ ESTÁ)", Color3.fromRGB(100, 220, 255))
+
+local activateHereBtn = Widgets.addButton(slimesTab, "Ativar Aqui (CollectPrompt)", Color3.fromRGB(0, 150, 150), 34)
+activateHereBtn.MouseButton1Click:Connect(function()
+    ActivateEventHere.activate()
+end)
+
+ActivateEventHere.setStatusLabel(Widgets.addFullLabel(slimesTab, "Status: PRONTO", Color3.fromRGB(100, 200, 100)))
+
+Widgets.addInfoLabel(slimesTab, "Vai até uma base (manualmente, andando/dirigindo) e clica no botão. Ele encontra o CollectPrompt mais próximo (até 100 studs de distância), dispara, clica no botão de confirmação COLETAR e pronto -- tudo no local onde você está, sem teleporte. Cada clique = uma ativação. Ótimo pra farmar slimes de outras bases que deixam a base aberta com slimes posicionados.")
 
 -- --- ABA CONFIGURACOES ---
 
